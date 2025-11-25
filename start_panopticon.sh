@@ -56,7 +56,7 @@ if ! python -c "import streamlit" >/dev/null 2>&1; then
   INSTALL_REQ="${INSTALL_REQ:-y}"
   if [[ "$INSTALL_REQ" =~ ^[Yy]$ ]]; then
     if [[ -f "requirements.txt" ]]; then
-      pip install -r requirements.txt
+      python -m pip install -r requirements.txt
     else
       echo -e "${RED}requirements.txt not found. Please install dependencies manually.${RESET}"
     fi
