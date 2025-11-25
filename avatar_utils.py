@@ -1,69 +1,88 @@
 # avatar_utils.py
 
-import os
-from functools import lru_cache
+from pathlib import Path
+from typing import Optional
 
 import numpy as np
 from PIL import Image
-import colorsys
-
-from models import Profile
-
-BASE_AVATAR_PATH = "assets/default_avatar.png"
 
 
-@lru_cache(maxsize=1)
+ASSETS_DIR = Path(__file__).parent / "assets"
+DEFAULT_AVATAR_PATH = ASSETS_DIR / "default_avatar.png"
+
+
 def load_base_avatar() -> Image.Image:
-    """
-    Load the base avatar image once and cache it.
-    """
-    if not os.path.exists(BASE_AVATAR_PATH):
-        raise FileNotFoundError(
-            f"Base avatar image not found at {BASE_AVATAR_PATH}. "
-            f"Make sure assets/default_avatar.png exists."
-        )
-    img = Image.open(BASE_AVATAR_PATH).convert("RGBA")
-    return img
+    if not DEFAULT_AVATAR_PATH.exists():
+        # As a fallback, create a simple placeholder image.
+        img = Image.new("RGB", (256, 256), color=(200, 200, 200))
+        return img
+    return Image.open(DEFAULT_AVATAR_PATH).convert("RGB")
 
 
-def tint_avatar(base: Image.Image, hue_shift: float) -> Image.Image:
+def tint_avatar(hue_shift: float, base_avatar: Optional[Image.Image] = None) -> Image.Image:
     """
-    Apply a hue shift to the base avatar.
-    hue_shift is in [0.0, 1.0) representing a full 0–360° rotation.
+    Apply an HSV hue shift in [0.0, 1.0] to the base avatar.
+    Returns a new PIL Image.
     """
-    # Convert to numpy array
-    arr = np.array(base).astype("float32")
+    if base_avatar is None:
+        base_avatar = load_base_avatar()
 
-    # Separate channels
-    r, g, b, a = np.rollaxis(arr, axis=-1)
-    r /= 255.0
-    g /= 255.0
-    b /= 255.0
+    img = base_avatar.convert("RGB")
+    arr = np.array(img).astype("float32") / 255.0
 
-    # Convert each pixel from RGB to HSV, shift hue, convert back
-    h, s, v = np.vectorize(colorsys.rgb_to_hsv)(r, g, b)
+    # Convert RGB to HSV
+    r, g, b = arr[..., 0], arr[..., 1], arr[..., 2]
+    cmax = np.max(arr, axis=-1)
+    cmin = np.min(arr, axis=-1)
+    delta = cmax - cmin + 1e-8
+
+    # Hue
+    h = np.zeros_like(cmax)
+    mask = delta != 0
+    r_eq = (cmax == r) & mask
+    g_eq = (cmax == g) & mask
+    b_eq = (cmax == b) & mask
+
+    h[r_eq] = ((g[r_eq] - b[r_eq]) / delta[r_eq]) % 6
+    h[g_eq] = ((b[g_eq] - r[g_eq]) / delta[g_eq]) + 2
+    h[b_eq] = ((r[b_eq] - g[b_eq]) / delta[b_eq]) + 4
+    h = h / 6.0  # to [0,1]
+
+    # Saturation and Value
+    s = delta / (cmax + 1e-8)
+    v = cmax
+
+    # Apply hue shift
     h = (h + hue_shift) % 1.0
-    r2, g2, b2 = np.vectorize(colorsys.hsv_to_rgb)(h, s, v)
 
-    r2 = (r2 * 255).astype("uint8")
-    g2 = (g2 * 255).astype("uint8")
-    b2 = (b2 * 255).astype("uint8")
+    # Convert HSV back to RGB
+    h6 = h * 6.0
+    i = np.floor(h6).astype(int)
+    f = h6 - i
+    p = v * (1.0 - s)
+    q = v * (1.0 - f * s)
+    t = v * (1.0 - (1.0 - f) * s)
 
-    rgba = np.stack([r2, g2, b2, a.astype("uint8")], axis=-1)
+    r2 = np.zeros_like(v)
+    g2 = np.zeros_like(v)
+    b2 = np.zeros_like(v)
 
-    tinted = Image.fromarray(rgba, mode="RGBA")
-    return tinted
+    i_mod = i % 6
+    mask0 = i_mod == 0
+    mask1 = i_mod == 1
+    mask2 = i_mod == 2
+    mask3 = i_mod == 3
+    mask4 = i_mod == 4
+    mask5 = i_mod == 5
 
+    r2[mask0], g2[mask0], b2[mask0] = v[mask0], t[mask0], p[mask0]
+    r2[mask1], g2[mask1], b2[mask1] = q[mask1], v[mask1], p[mask1]
+    r2[mask2], g2[mask2], b2[mask2] = p[mask2], v[mask2], t[mask2]
+    r2[mask3], g2[mask3], b2[mask3] = p[mask3], q[mask3], v[mask3]
+    r2[mask4], g2[mask4], b2[mask4] = t[mask4], p[mask4], v[mask4]
+    r2[mask5], g2[mask5], b2[mask5] = v[mask5], p[mask5], q[mask5]
 
-def get_avatar_for_profile(profile: Profile) -> Image.Image:
-    """
-    Returns a tinted avatar image for a given profile.
-    For now, all synthetic profiles share the same base avatar,
-    but with different hue shifts.
-    """
-    base = load_base_avatar()
+    out = np.stack([r2, g2, b2], axis=-1)
+    out = (np.clip(out, 0.0, 1.0) * 255).astype("uint8")
 
-    # If in the future you want different logic per role:
-    # if profile.role == "parent": return base (no tint), etc.
-    hue = profile.avatar_hue_shift or 0.0
-    return tint_avatar(base, hue)
+    return Image.fromarray(out)

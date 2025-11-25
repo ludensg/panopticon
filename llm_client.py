@@ -1,42 +1,40 @@
 # llm_client.py
 
 import os
+from typing import Optional
+
 from openai import OpenAI
 
-# Initialize client once (reads OPENAI_API_KEY from env)
-client = OpenAI()
 
-# Default model for feed generation
-DEFAULT_MODEL = "gpt-4.1-mini"  # adjust if you prefer another model
+# You must set OPENAI_API_KEY in your environment
+# e.g. `export OPENAI_API_KEY="sk-..."` in your shell
+_client: Optional[OpenAI] = None
 
 
-def call_llm(prompt: str) -> str:
+def get_client() -> OpenAI:
+    global _client
+    if _client is None:
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY is not set in environment.")
+        _client = OpenAI(api_key=api_key)
+    return _client
+
+
+def call_llm(prompt: str, model: str = "gpt-4.1-mini") -> str:
     """
-    Call the OpenAI Chat Completions API with a simple user prompt.
-    Returns the model's text response.
+    Simple wrapper around OpenAI chat completion.
+    If you want to mock during development, stub this function.
     """
-    # Safety: in case key is missing, fail loudly
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        # Optional: you can raise or return a clear message
-        # but raising is better so you don't silently fail.
-        raise RuntimeError(
-            "OPENAI_API_KEY is not set. Please export it in your environment."
-        )
+    client = get_client()
 
-    # The OpenAI client picks up the key from the environment,
-    # so we don't need to pass it here explicitly.
     response = client.chat.completions.create(
-        model=DEFAULT_MODEL,
+        model=model,
         messages=[
-            {
-                "role": "user",
-                "content": prompt,
-            }
+            {"role": "system", "content": "You are a friendly assistant for a child-safe social media simulator."},
+            {"role": "user", "content": prompt},
         ],
         temperature=0.8,
+        max_tokens=120,
     )
-
-    # Extract the text
-    content = response.choices[0].message.content
-    return content.strip()
+    return response.choices[0].message.content.strip()

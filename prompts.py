@@ -1,43 +1,71 @@
 # prompts.py
 
-GAMIFIED_PROMPT = """
-You are generating a social media style post for a CHILD-FRIENDLY, CARTOONY digital world.
+REALISTIC_PROMPT = """
+You are generating a short, child-safe social media post in ENGLISH.
 
-Context:
-- The child is {child_age} years old.
-- The main topic is: {topic}.
-- The profile posting this is:
-  - Name: {profile_name}
-  - Personality: {personality_tags}
-  - Avatar style: cartoony
+Overall purpose:
+- This is for a simulated social-media-like feed for children.
+- It should feel like a real kid or peer wrote it, but remain completely safe and age-appropriate.
 
-Requirements:
-- Write 1 short, fun, positive post this profile might share.
-- Use very simple language appropriate for a {child_age}-year-old.
-- Include 1–2 emojis that match the tone.
-- Do NOT mention that this is a simulation or that you are AI.
-- Avoid anything scary, violent, or adult.
+HARD CONSTRAINTS:
+- Audience: a child around {child_age} years old.
+- Tone: friendly, warm, simple, and calm.
+- Length: 1 to 3 sentences, at most ~40 words in total.
+- Reading level: roughly appropriate for a child of that age (short sentences, everyday words).
+- ABSOLUTELY NO:
+  - explicit content, gore, hate, bullying, romance, or scary themes,
+  - requests for personal information, contact details, or locations,
+  - references to AI, simulations, being generated, "as an AI", "as a bot", or similar.
+- No quoting the instructions or mentioning safety rules.
 
-Respond with ONLY the text of the post.
+CONTEXT:
+- Topic of the post: {topic}
+- Author's personality tags: {personality_tags}
+- Author's display name: {author_name}
+- Child's listed interests: {child_interests}
+
+STYLE:
+- It should sound like a real, friendly kid posting about the topic.
+- You MAY use first person ("I") if natural.
+- You MAY refer to everyday school, hobbies, or family life.
+- Keep it grounded in normal kid experiences.
+
+TASK:
+Write ONE short post consistent with the constraints above.
+Return ONLY the post text with no explanations, no quotation marks, and no extra commentary.
 """
 
-REALISTIC_PROMPT = """
-You are generating a social media style post for a CHILD-SAFE but REALISTIC social feed.
+GAMIFIED_PROMPT = """
+You are generating a playful, cartoony, obviously game-like social media post in ENGLISH.
 
-Context:
-- The child is {child_age} years old.
-- The main topic is: {topic}.
-- The profile posting this is:
-  - Name: {profile_name}
-  - Personality: {personality_tags}
-  - Avatar style: realistic
+Overall purpose:
+- This is for a simulated, game-like social feed for children.
+- It should be clearly fictional and feel like part of a fun game world, not real life.
 
-Requirements:
-- Write 1 short, natural-sounding post that a real kid around {child_age} might share.
-- Keep it friendly, encouraging, and appropriate for children.
-- You may include 1 emoji, but do not overdo it.
-- Do NOT mention AI, simulations, or anything meta.
-- Avoid complex or negative topics; stay curious and kind.
+HARD CONSTRAINTS:
+- Audience: a child around {child_age} years old.
+- Tone: silly, light, positive, and safe.
+- Length: 1 to 3 sentences, at most ~40 words in total.
+- Reading level: roughly appropriate for a child of that age (short sentences, everyday words).
+- ABSOLUTELY NO:
+  - explicit content, gore, hate, bullying, romance, or scary themes,
+  - requests for personal information, contact details, or locations,
+  - references to AI, simulations, being generated, "as an AI", "as a bot", or similar.
+- No quoting the instructions or mentioning safety rules.
 
-Respond with ONLY the text of the post.
+CONTEXT:
+- Topic of the post: {topic}
+- Author's personality tags: {personality_tags}
+- Author's display name: {author_name}
+- Child's listed interests: {child_interests}
+
+STYLE:
+- It should clearly feel like a pretend, cartoony or fantasy world.
+- You MAY mention that this is in a "game", "quest", or "imaginary world".
+- Use a few fun emojis (2–5), but do not spam them.
+- The tone should be playful and whimsical.
+
+TASK:
+Write ONE short post consistent with the constraints above.
+Return ONLY the post text with no explanations, no quotation marks, and no extra commentary.
 """

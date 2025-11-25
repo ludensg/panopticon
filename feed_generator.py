@@ -1,110 +1,144 @@
 # feed_generator.py
 
+from __future__ import annotations
+
 import random
 from typing import List
-import uuid
 
-from models import ChildConfig, Profile, Post
-from prompts import GAMIFIED_PROMPT, REALISTIC_PROMPT
+from models import (
+    ChildState,
+    GardenState,
+    Post,
+    make_id,
+)
+from prompts import REALISTIC_PROMPT, GAMIFIED_PROMPT
 from llm_client import call_llm
 
-# Some simple personality options for auto-generated synthetic profiles.
-PERSONALITY_POOL = [
-    ["curious", "kind", "excitable"],
-    ["creative", "thoughtful", "funny"],
-    ["adventurous", "friendly", "imaginative"],
-]
 
-# Topic-based name prefixes for synthetic personas.
-NAME_PREFIXES = {
-    "space": ["Astro", "Nova", "Stellar", "Orbit"],
-    "dinosaurs": ["Dino", "Rex", "Fossil"],
-    "drawing": ["Sketch", "Doodle", "Canvas"],
-    "music": ["Melody", "Rhythm", "Beat"],
-    "animals": ["Paws", "Fluffy", "Wild"],
-}
+def sanitize_post_text(text: str, max_len: int = 280) -> str:
+    """Simple cleanup for LLM outputs."""
+    if not text:
+        return ""
+    t = text.strip()
+    if (t.startswith('"') and t.endswith('"')) or (t.startswith("'") and t.endswith("'")):
+        t = t[1:-1].strip()
+    t = " ".join(line.strip() for line in t.splitlines() if line.strip())
+    if len(t) > max_len:
+        t = t[: max_len - 1].rstrip() + "…"
+    return t
 
 
-def generate_synthetic_profile(topic: str, mode: str) -> Profile:
-    """
-    Generate a synthetic profile tailored to a given topic and mode.
-    These will be used both in feed posts and later in simulations/DMs.
-    """
-    personality = random.choice(PERSONALITY_POOL)
-    style = "cartoony" if mode == "gamified" else "realistic"
-    base = random.choice(NAME_PREFIXES.get(topic, ["Buddy", "Sunny", "Bright"]))
+def _sample_topics(child: ChildState) -> List[str]:
+    interests = [i for i in child.config.interests if i.weight > 0]
+    if not interests:
+        return ["general"] * child.config.max_posts
 
-    profile_id = f"profile_{uuid.uuid4().hex[:8]}"
+    max_posts = child.config.max_posts
+    topics = [i.topic for i in interests]
+    weights = [i.weight for i in interests]
+    total = sum(weights) or 1.0
+    probs = [w / total for w in weights]
 
-    return Profile(
-        id=profile_id,
+    sampled: List[str] = []
+    if max_posts >= len(interests):
+        # ensure each interest shows up at least once
+        base_topics = [i.topic for i in interests]
+        sampled.extend(base_topics)
+        remaining = max_posts - len(base_topics)
+        if remaining > 0:
+            extra = random.choices(topics, weights=probs, k=remaining)
+            sampled.extend(extra)
+    else:
+        sampled = random.choices(topics, weights=probs, k=max_posts)
+
+    random.shuffle(sampled)
+    return sampled
+
+
+def _find_or_create_profile_for_topic(
+    garden: GardenState,
+    topic: str,
+    mode: str,
+) -> "Profile":
+    from models import Profile  # local import to avoid circular issues
+
+    # Try to find existing synthetic profile with this topic
+    for p in garden.profiles:
+        if p.role == "synthetic" and topic in p.topics:
+            return p
+
+    # Create a new synthetic profile
+    display_name = random.choice(
+        ["SkyKid", "StarGazer", "PixelPal", "DinoBuddy", "ArtHero", "CloudRider"]
+    ) + str(random.randint(1, 999))
+
+    personality_pool = [
+        "curious",
+        "shy",
+        "outgoing",
+        "creative",
+        "thoughtful",
+        "funny",
+        "adventurous",
+    ]
+    personality_tags = random.sample(personality_pool, k=2)
+
+    hue_shift = random.random()
+    avatar_style = "cartoony" if mode == "gamified" else "realistic"
+
+    profile = Profile(
+        id=make_id("profile"),
         role="synthetic",
-        display_name=f"{base}{random.randint(1, 99)}",
-        avatar_style=style,
-        personality_tags=personality,
+        display_name=display_name,
+        avatar_style=avatar_style,
+        personality_tags=personality_tags,
         topics=[topic],
         is_parent_controlled=False,
+        avatar_hue_shift=hue_shift,
     )
+    garden.profiles.append(profile)
+    return profile
 
 
-def generate_feed(child: ChildConfig) -> (List[Post], List[Profile]):
+def generate_feed_for_child(garden: GardenState, child: ChildState) -> List[Post]:
     """
-    Generate a list of posts and the synthetic profiles that authored them.
-
-    Returns:
-        posts: List[Post]
-        profiles: List[Profile] used in this feed (to later support DMs/simulations).
+    Generate a feed for a specific child within a garden.
+    Updates child.posts and returns the new posts.
     """
-    if not child.interests:
-        return [], []
-
-    # 1. Sample topics based on interest weights.
-    topics: List[str] = []
-    weights = [i.weight for i in child.interests]
-    names = [i.topic for i in child.interests]
-
-    for _ in range(child.max_posts):
-        topics.append(random.choices(names, weights=weights, k=1)[0])
-
+    topics = _sample_topics(child)
     posts: List[Post] = []
-    profiles: List[Profile] = []
 
-    # To avoid duplicating profiles per post, we keep a memo:
-    topic_to_profile: dict[str, Profile] = {}
+    child_interests_str = ", ".join(i.topic for i in child.config.interests)
 
     for topic in topics:
-        if topic in topic_to_profile:
-            profile = topic_to_profile[topic]
-        else:
-            profile = generate_synthetic_profile(topic, child.mode)
-            topic_to_profile[topic] = profile
-            profiles.append(profile)
+        author_profile = _find_or_create_profile_for_topic(garden, topic, child.config.mode)
 
-        if child.mode == "gamified":
-            prompt = GAMIFIED_PROMPT.format(
-                child_age=child.age,
-                topic=topic,
-                profile_name=profile.display_name,
-                personality_tags=", ".join(profile.personality_tags),
-            )
-        else:
-            prompt = REALISTIC_PROMPT.format(
-                child_age=child.age,
-                topic=topic,
-                profile_name=profile.display_name,
-                personality_tags=", ".join(profile.personality_tags),
-            )
+        base_prompt = REALISTIC_PROMPT if child.config.mode == "realistic" else GAMIFIED_PROMPT
+        prompt = base_prompt.format(
+            child_age=child.config.age,
+            topic=topic,
+            personality_tags=", ".join(author_profile.personality_tags),
+            author_name=author_profile.display_name,
+            child_interests=child_interests_str,
+        )
 
-        text = call_llm(prompt)
+        try:
+            raw = call_llm(prompt)
+        except Exception as e:
+            raw = f"(LLM error: {e}) This is a placeholder post about {topic}."
+
+        text = sanitize_post_text(raw)
 
         post = Post(
-            id=f"post_{uuid.uuid4().hex[:8]}",
-            author_profile_id=profile.id,
-            author_name=profile.display_name,
+            id=make_id("post"),
+            child_id=child.id,
+            author_profile_id=author_profile.id,
+            author_name=author_profile.display_name,
             text=text,
             topic=topic,
-            mode=child.mode,
+            mode=child.config.mode,
         )
         posts.append(post)
 
-    return posts, profiles
+    child.posts = posts
+    return posts
