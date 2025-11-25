@@ -203,9 +203,42 @@ def sidebar_garden_and_child_management():
             st.rerun()  # update labels, header, and any dependent views
 
         if st.sidebar.button("Generate feed for this child"):
-            generate_feed_for_child(garden, active_child)
-            st.sidebar.success("Feed generated.")
-            st.rerun()  # ensure Feed tab shows the new posts immediately
+            # Decide which model string to pass based on backend
+            backend = st.session_state.get("llm_backend", "openai")
+            if backend == "openai":
+                model_name = st.session_state.get("openai_model", "gpt-4.1-mini")
+            else:
+                model_name = st.session_state.get("ollama_model", "llama3")
+
+            generate_feed_for_child(garden, active_child, backend=backend, model_name=model_name)
+            st.sidebar.success(f"Feed generated using {backend} ({model_name}).")
+            st.rerun()
+
+
+    # ---- AI backend selection ----
+    st.sidebar.subheader("AI Backend")
+
+    backend = st.sidebar.radio(
+        "Backend",
+        options=["openai", "ollama"],
+        index=0,
+        key="llm_backend",
+        help="Choose whether to use OpenAI's API or a local Ollama model.",
+    )
+
+    openai_model = st.sidebar.text_input(
+        "OpenAI model",
+        value=st.session_state.get("openai_model", "gpt-4.1-mini"),
+        key="openai_model",
+    )
+
+    ollama_model = st.sidebar.text_input(
+        "Ollama model",
+        value=st.session_state.get("ollama_model", "llama3"),
+        key="ollama_model",
+        help="Make sure you've pulled this model with `ollama pull <model>`.",
+    )
+
 
 
 

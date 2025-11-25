@@ -41,7 +41,6 @@ def _sample_topics(child: ChildState) -> List[str]:
 
     sampled: List[str] = []
     if max_posts >= len(interests):
-        # ensure each interest shows up at least once
         base_topics = [i.topic for i in interests]
         sampled.extend(base_topics)
         remaining = max_posts - len(base_topics)
@@ -62,12 +61,10 @@ def _find_or_create_profile_for_topic(
 ) -> "Profile":
     from models import Profile  # local import to avoid circular issues
 
-    # Try to find existing synthetic profile with this topic
     for p in garden.profiles:
         if p.role == "synthetic" and topic in p.topics:
             return p
 
-    # Create a new synthetic profile
     display_name = random.choice(
         ["SkyKid", "StarGazer", "PixelPal", "DinoBuddy", "ArtHero", "CloudRider"]
     ) + str(random.randint(1, 999))
@@ -100,9 +97,14 @@ def _find_or_create_profile_for_topic(
     return profile
 
 
-def generate_feed_for_child(garden: GardenState, child: ChildState) -> List[Post]:
+def generate_feed_for_child(
+    garden: GardenState,
+    child: ChildState,
+    backend: str = "openai",
+    model_name: str | None = None,
+) -> List[Post]:
     """
-    Generate a feed for a specific child within a garden.
+    Generate a feed for a specific child within a garden, using the chosen backend + model.
     Updates child.posts and returns the new posts.
     """
     topics = _sample_topics(child)
@@ -123,7 +125,7 @@ def generate_feed_for_child(garden: GardenState, child: ChildState) -> List[Post
         )
 
         try:
-            raw = call_llm(prompt)
+            raw = call_llm(prompt, backend=backend, model=model_name)
         except Exception as e:
             raw = f"(LLM error: {e}) This is a placeholder post about {topic}."
 

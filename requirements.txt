@@ -2,4 +2,5 @@ streamlit
 openai>=1.0.0
 pillow
 numpy
-python-dotenv    # if you like loading .env
+python-dotenv    
+ollama
