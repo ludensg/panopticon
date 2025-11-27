@@ -20,6 +20,24 @@ from prompts import REALISTIC_PROMPT, GAMIFIED_PROMPT
 from llm_client import call_llm
 
 
+def choose_sub_flavor(post_flavor: str) -> str:
+    """
+    Pick a more granular sub-flavor for the post.
+
+    This is used by the prompt templates as {sub_flavor} and can be things like:
+    - personal_story
+    - how_to_tip
+    - cool_fact
+    - mini_report
+    """
+    if "news" in post_flavor.lower():
+        # News-like posts
+        return random.choice(["cool_fact", "mini_report", "today_i_learned"])
+    else:
+        # Personal-style posts
+        return random.choice(["personal_story", "how_to_tip", "reflection"])
+
+
 def sanitize_post_text(text: str, max_len: int = 280) -> str:
     """Simple cleanup for LLM outputs."""
     if not text:
@@ -155,6 +173,9 @@ def generate_feed_for_child(
         else:
             post_flavor = "personal update"
 
+        # NEW: pick a sub_flavor for the prompt
+        sub_flavor = choose_sub_flavor(post_flavor)
+
         base_prompt = REALISTIC_PROMPT if child.config.mode == "realistic" else GAMIFIED_PROMPT
         prompt = base_prompt.format(
             adaptive_context=adaptive_context,
@@ -164,7 +185,9 @@ def generate_feed_for_child(
             author_name=author_profile.display_name,
             child_interests=child_interests_str,
             post_flavor=post_flavor,
+            sub_flavor=sub_flavor,  # <-- this fixes the KeyError
         )
+
 
 
         try:
@@ -180,6 +203,7 @@ def generate_feed_for_child(
             # Try to fetch a kid-safe image URL from Pixabay
             image_url = search_image_for_topic(topic)
 
+        now = datetime.utcnow()
         post = Post(
             id=make_id("post"),
             child_id=child.id,
@@ -189,12 +213,19 @@ def generate_feed_for_child(
             topic=topic,
             mode=child.config.mode,
             image_url=image_url,
+            created_at=now,
         )
 
         posts.append(post)
 
-    child.posts = posts
-    return posts
+    # Instead of replacing the feed, prepend new posts on top of existing ones.
+    # Newest posts first.
+    if child.posts:
+        child.posts = posts + child.posts
+    else:
+        child.posts = posts
+
+    return child.posts
 
 def build_adaptive_context(child: ChildState) -> str:
         sp = child.skill_profile

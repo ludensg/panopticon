@@ -79,7 +79,8 @@ class Post:
     text: str
     topic: str
     mode: Literal["realistic", "gamified"]
-    image_url: Optional[str] = None  # optional web image related to topic
+    image_url: Optional[str] = None
+    created_at: datetime = field(default_factory=datetime.utcnow)
 
 
 @dataclass

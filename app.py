@@ -414,14 +414,15 @@ def feed_tab(garden: GardenState, child: ChildState) -> None:
         if not child.posts:
             st.info("No posts yet. Generate a feed to get started.")
         else:
-            for post in child.posts:
+            # Sort posts by timestamp, newest first
+            posts_sorted = sorted(child.posts, key=lambda p: p.created_at, reverse=True)
+
+            for post in posts_sorted:
                 author_profile = garden.get_profile_by_id(post.author_profile_id)
 
                 with st.container():
-                    # 3-column layout: avatar | text | small side image
                     col_avatar, col_text, col_image = st.columns([1, 7, 3])
 
-                    # --- Avatar column ---
                     with col_avatar:
                         if author_profile is not None:
                             try:
@@ -432,24 +433,24 @@ def feed_tab(garden: GardenState, child: ChildState) -> None:
                         else:
                             st.markdown("🧑")
 
-                    # --- Text column ---
                     with col_text:
+                        # Format timestamp
+                        ts = post.created_at.strftime("%Y-%m-%d %H:%M")
                         st.markdown(
                             f"**{post.author_name}**  \n"
-                            f"*Topic: {post.topic}*"
+                            f"*Topic: {post.topic}* · `{ts}`"
                         )
                         st.write(post.text)
 
-                    # --- Image column (small, side thumbnail) ---
                     with col_image:
                         if post.image_url:
                             try:
-                                # Small thumbnail; column is narrow so width ~ 120px is plenty
                                 st.image(post.image_url, width=120)
                             except Exception:
                                 st.caption("Image unavailable")
 
                     st.markdown("---")
+
 
 
 
