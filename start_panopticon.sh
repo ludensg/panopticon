@@ -63,10 +63,10 @@ if ! python -c "import streamlit" >/dev/null 2>&1; then
   fi
 fi
 
-# 6) Check OpenAI key (for when backend=openai)
+# 6) Check OpenAI key (for when backend=openai) 
 if [[ -z "${OPENAI_API_KEY:-}" ]]; then
   echo -e "${YELLOW}⚠ OPENAI_API_KEY is not set in the environment.${RESET}"
-  echo "You can still use Ollama backend only."
+  echo "You can still use the Ollama backend only."
   read -r -p "Set OPENAI_API_KEY for this session now? [y/N]: " SET_OAI
   SET_OAI="${SET_OAI:-n}"
   if [[ "$SET_OAI" =~ ^[Yy]$ ]]; then
@@ -76,7 +76,20 @@ if [[ -z "${OPENAI_API_KEY:-}" ]]; then
   fi
 fi
 
-# 7) Ask which port to run on (optional)
+# 7) Check Pixabay key (for image search in feeds)
+if [[ -z "${PIXABAY_API_KEY:-}" ]]; then
+  echo -e "${YELLOW}⚠ PIXABAY_API_KEY is not set in the environment.${RESET}"
+  echo "Feed image search will be disabled (no images in posts)."
+  read -r -p "Set PIXABAY_API_KEY for this session now? [y/N]: " SET_PX
+  SET_PX="${SET_PX:-n}"
+  if [[ "$SET_PX" =~ ^[Yy]$ ]]; then
+    read -r -p "Enter your Pixabay API key: " INPUT_PX_KEY
+    export PIXABAY_API_KEY="$INPUT_PX_KEY"
+    echo -e "${GREEN}✔ PIXABAY_API_KEY set for this shell session.${RESET}"
+  fi
+fi
+
+# 8) Ask which port to run on (optional)
 read -r -p "Streamlit port [default 8501]: " PORT
 PORT="${PORT:-8501}"
 
@@ -84,5 +97,5 @@ echo
 echo -e "${GREEN}Starting Panopticon with Streamlit on port ${PORT}...${RESET}"
 echo "Use Ctrl+C to stop."
 
-# 8) Run Streamlit
+# 9) Run Streamlit
 streamlit run app.py --server.port="$PORT"

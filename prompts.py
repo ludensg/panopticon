@@ -1,71 +1,58 @@
 # prompts.py
 
 REALISTIC_PROMPT = """
-You are generating a short, child-safe social media post in ENGLISH.
+You are writing a short, kid-safe post for a social media-like feed.
 
-Overall purpose:
-- This is for a simulated social-media-like feed for children.
-- It should feel like a real kid or peer wrote it, but remain completely safe and age-appropriate.
+Context:
+- Child age: {child_age}
+- Topic: {topic}
+- Child interests: {child_interests}
+- Post flavor: {post_flavor}  # either "personal update" or "kid-friendly news"
+- Author persona: {author_name} (personality: {personality_tags})
 
-HARD CONSTRAINTS:
-- Audience: a child around {child_age} years old.
-- Tone: friendly, warm, simple, and calm.
-- Length: 1 to 3 sentences, at most ~40 words in total.
-- Reading level: roughly appropriate for a child of that age (short sentences, everyday words).
-- ABSOLUTELY NO:
-  - explicit content, gore, hate, bullying, romance, or scary themes,
-  - requests for personal information, contact details, or locations,
-  - references to AI, simulations, being generated, "as an AI", "as a bot", or similar.
-- No quoting the instructions or mentioning safety rules.
+Requirements:
+- Length: 1–3 sentences.
+- Tone: warm, engaging, not babyish or sarcastic.
+- Language: clear, concrete, avoid slang that would age badly.
+- Never mention AI, simulations, or that this is fake.
 
-CONTEXT:
-- Topic of the post: {topic}
-- Author's personality tags: {personality_tags}
-- Author's display name: {author_name}
-- Child's listed interests: {child_interests}
+If the post flavor is "personal update":
+- Write as if the author is sharing a small moment, idea, or tip about the topic.
+- You can include a small thought, observation, or question that might invite comments.
 
-STYLE:
-- It should sound like a real, friendly kid posting about the topic.
-- You MAY use first person ("I") if natural.
-- You MAY refer to everyday school, hobbies, or family life.
-- Keep it grounded in normal kid experiences.
+If the post flavor is "kid-friendly news":
+- Write in an informative style, like a friend sharing a cool thing they just learned.
+- When possible, refer to a recent (2020s) positive or important development about the topic
+  in a simple, reassuring way (no graphic, scary, or sensational details).
+- Focus on what a child could learn or feel excited about.
 
-TASK:
-Write ONE short post consistent with the constraints above.
-Return ONLY the post text with no explanations, no quotation marks, and no extra commentary.
+Return ONLY the post text, no labels, no quotes.
 """
 
 GAMIFIED_PROMPT = """
-You are generating a playful, cartoony, obviously game-like social media post in ENGLISH.
+You are writing a playful, clearly game-like post for a kid-safe social media simulator.
 
-Overall purpose:
-- This is for a simulated, game-like social feed for children.
-- It should be clearly fictional and feel like part of a fun game world, not real life.
+Context:
+- Child age: {child_age}
+- Topic: {topic}
+- Child interests: {child_interests}
+- Post flavor: {post_flavor}  # "personal update" or "kid-friendly news"
+- Author persona: {author_name} (personality: {personality_tags})
 
-HARD CONSTRAINTS:
-- Audience: a child around {child_age} years old.
-- Tone: silly, light, positive, and safe.
-- Length: 1 to 3 sentences, at most ~40 words in total.
-- Reading level: roughly appropriate for a child of that age (short sentences, everyday words).
-- ABSOLUTELY NO:
-  - explicit content, gore, hate, bullying, romance, or scary themes,
-  - requests for personal information, contact details, or locations,
-  - references to AI, simulations, being generated, "as an AI", "as a bot", or similar.
-- No quoting the instructions or mentioning safety rules.
+Requirements:
+- Length: 1–3 short sentences.
+- Tone: cartoonish, fun, emoji-friendly, but still respectful and not annoying.
+- It should be obvious this is playful or game-like, not a real social network.
+- Never mention AI, simulations, or that this is fake explicitly; let the over-the-top style hint it.
+- Avoid scary content or anything intense.
 
-CONTEXT:
-- Topic of the post: {topic}
-- Author's personality tags: {personality_tags}
-- Author's display name: {author_name}
-- Child's listed interests: {child_interests}
+If the post flavor is "personal update":
+- Make it feel like a character sharing something silly or cool they did or noticed.
 
-STYLE:
-- It should clearly feel like a pretend, cartoony or fantasy world.
-- You MAY mention that this is in a "game", "quest", or "imaginary world".
-- Use a few fun emojis (2–5), but do not spam them.
-- The tone should be playful and whimsical.
+If the post flavor is "kid-friendly news":
+- Present news-like information as a fun fact or story.
+- Mention only positive or neutral aspects; no graphic or frightening details.
+- Focus on wonder, curiosity, or teamwork.
 
-TASK:
-Write ONE short post consistent with the constraints above.
-Return ONLY the post text with no explanations, no quotation marks, and no extra commentary.
+Return ONLY the post text, no labels, no quotes.
 """

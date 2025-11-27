@@ -12,7 +12,7 @@ from models import (
     make_id,
     Profile
 )
-from avatar_utils import load_base_avatar, tint_avatar
+from avatar_utils import get_circular_avatar_for_profile
 from feed_generator import generate_feed_for_child  # we'll define this function
 from datetime import datetime
 from scenarios import get_scenarios_for_child_age, get_scenario_by_id
@@ -399,28 +399,131 @@ def overview_tab(garden: GardenState, child: ChildState):
         st.info("No DMs yet for this child.")
 
 
-def feed_tab(garden: GardenState, child: ChildState):
-    st.subheader("Feed")
+def feed_tab(garden: GardenState, child: ChildState) -> None:
+    st.header(f"Feed for {child.config.name}")
 
-    if not child.posts:
-        st.info("No posts yet. Click 'Generate feed for this child' in the sidebar.")
-        return
+    feed_view, settings_view = st.tabs(["Feed", "Feed settings"])
 
-    base_avatar = load_base_avatar()
-    for post in child.posts:
-        author = garden.get_profile_by_id(post.author_profile_id)
-        if not author:
-            continue
+    with feed_view:
+        if st.button("Generate feed for this child"):
+            backend, model_name = get_feed_llm_config()
+            generate_feed_for_child(garden, child, backend=backend, model_name=model_name)
+            st.success("Feed generated.")
+            st.rerun()
 
-        with st.container():
-            cols = st.columns([1, 5])
-            with cols[0]:
-                tinted = tint_avatar(author.avatar_hue_shift, base_avatar)
-                st.image(tinted, use_container_width=True)
-            with cols[1]:
-                st.markdown(f"**{author.display_name}** · _Topic: {post.topic}_")
-                st.write(post.text)
-        st.markdown("---")
+        if not child.posts:
+            st.info("No posts yet. Generate a feed to get started.")
+        else:
+            for post in child.posts:
+                author_profile = garden.get_profile_by_id(post.author_profile_id)
+
+                with st.container():
+                    # 3-column layout: avatar | text | small side image
+                    col_avatar, col_text, col_image = st.columns([1, 7, 3])
+
+                    # --- Avatar column ---
+                    with col_avatar:
+                        if author_profile is not None:
+                            try:
+                                avatar_img = get_circular_avatar_for_profile(author_profile, size=40)
+                                st.image(avatar_img, width=40)
+                            except Exception:
+                                st.markdown("🧑")
+                        else:
+                            st.markdown("🧑")
+
+                    # --- Text column ---
+                    with col_text:
+                        st.markdown(
+                            f"**{post.author_name}**  \n"
+                            f"*Topic: {post.topic}*"
+                        )
+                        st.write(post.text)
+
+                    # --- Image column (small, side thumbnail) ---
+                    with col_image:
+                        if post.image_url:
+                            try:
+                                # Small thumbnail; column is narrow so width ~ 120px is plenty
+                                st.image(post.image_url, width=120)
+                            except Exception:
+                                st.caption("Image unavailable")
+
+                    st.markdown("---")
+
+
+
+    with settings_view:
+        st.subheader("Feed settings")
+
+        # Interests and weights (simple UI – adjust to your existing pattern)
+        st.markdown("**Topics & interests**")
+        current_topics = [i.topic for i in child.config.interests]
+        default_suggestions = ["space", "animals", "drawing", "science", "history", "music", "sports"]
+
+        # Multi-select suggestions + existing topics
+        topic_choices = sorted(set(default_suggestions + current_topics))
+        selected_topics = st.multiselect(
+            "Select topics",
+            options=topic_choices,
+            default=current_topics,
+            key=f"topics_select_{child.id}",
+        )
+
+        # Simple: give all selected topics equal weight.
+        # (You can keep your existing per-topic sliders if you like; this is the minimal version.)
+        new_interests = []
+        if selected_topics:
+            equal_weight = 1.0 / len(selected_topics)
+            for t in selected_topics:
+                new_interests.append(Interest(topic=t, weight=equal_weight))
+
+        # Post volume settings
+        st.markdown("**Post volume**")
+        max_posts = st.slider(
+            "Max posts (normal hours)",
+            min_value=1,
+            max_value=30,
+            value=child.config.max_posts,
+            key=f"max_posts_{child.id}",
+        )
+        max_posts_quiet = st.slider(
+            "Max posts during quiet hours (school/late)",
+            min_value=0,
+            max_value=30,
+            value=child.config.max_posts_quiet or child.config.max_posts,
+            key=f"max_posts_quiet_{child.id}",
+        )
+
+        st.markdown("**Content style**")
+        news_ratio = st.slider(
+            "Fraction of posts that are kid-friendly news",
+            min_value=0.0,
+            max_value=1.0,
+            value=child.config.news_ratio,
+            step=0.05,
+            key=f"news_ratio_{child.id}",
+        )
+
+        image_ratio = st.slider(
+            "Fraction of posts that include an image",
+            min_value=0.0,
+            max_value=1.0,
+            value=child.config.image_ratio,
+            step=0.05,
+            key=f"image_ratio_{child.id}",
+        )
+
+        if st.button("Save feed settings", key=f"save_feed_settings_{child.id}"):
+            if new_interests:
+                child.config.interests = new_interests
+            child.config.max_posts = max_posts
+            child.config.max_posts_quiet = max_posts_quiet
+            child.config.news_ratio = news_ratio
+            child.config.image_ratio = image_ratio
+            st.success("Feed settings updated.")
+            st.rerun()
+
 
 
 def dm_tab(garden: GardenState, child: ChildState):

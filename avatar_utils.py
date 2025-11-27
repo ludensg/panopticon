@@ -1,37 +1,74 @@
 # avatar_utils.py
 
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
+from models import Profile
 
+# ---------------------------------------------------------------------------
+# Paths / constants
+# ---------------------------------------------------------------------------
 
 ASSETS_DIR = Path(__file__).parent / "assets"
 DEFAULT_AVATAR_PATH = ASSETS_DIR / "default_avatar.png"
 
+# Cached base avatar to avoid reloading from disk repeatedly
+_BASE_AVATAR: Optional[Image.Image] = None
+
+
+# ---------------------------------------------------------------------------
+# Base avatar loading
+# ---------------------------------------------------------------------------
 
 def load_base_avatar() -> Image.Image:
-    if not DEFAULT_AVATAR_PATH.exists():
-        # As a fallback, create a simple placeholder image.
-        img = Image.new("RGB", (256, 256), color=(200, 200, 200))
-        return img
-    return Image.open(DEFAULT_AVATAR_PATH).convert("RGB")
+    """
+    Load the default avatar image as RGBA.
 
+    If the default avatar file is missing, returns a simple placeholder image.
+    This function is safe to call multiple times; it uses an in-memory cache.
+    """
+    global _BASE_AVATAR
+
+    if _BASE_AVATAR is not None:
+        return _BASE_AVATAR
+
+    if not DEFAULT_AVATAR_PATH.exists():
+        # Fallback: flat gray placeholder
+        img = Image.new("RGBA", (256, 256), color=(200, 200, 200, 255))
+        _BASE_AVATAR = img
+        return img
+
+    img = Image.open(DEFAULT_AVATAR_PATH).convert("RGBA")
+    _BASE_AVATAR = img
+    return img
+
+
+# ---------------------------------------------------------------------------
+# Hue-shift tinting
+# ---------------------------------------------------------------------------
 
 def tint_avatar(hue_shift: float, base_avatar: Optional[Image.Image] = None) -> Image.Image:
     """
-    Apply an HSV hue shift in [0.0, 1.0] to the base avatar.
-    Returns a new PIL Image.
+    Apply an HSV hue shift in [0.0, 1.0] to the base avatar and return a new PIL Image.
+
+    The alpha channel (if present) is preserved.
     """
     if base_avatar is None:
         base_avatar = load_base_avatar()
 
-    img = base_avatar.convert("RGB")
-    arr = np.array(img).astype("float32") / 255.0
+    # Separate out alpha (if any) so we don't mess with it during RGB HSV math.
+    base_avatar = base_avatar.convert("RGBA")
+    rgb_img = base_avatar.convert("RGB")
+    alpha = base_avatar.split()[-1]  # last channel is alpha
 
-    # Convert RGB to HSV
+    # Convert to float RGB array
+    arr = np.array(rgb_img).astype("float32") / 255.0
     r, g, b = arr[..., 0], arr[..., 1], arr[..., 2]
+
     cmax = np.max(arr, axis=-1)
     cmin = np.min(arr, axis=-1)
     delta = cmax - cmin + 1e-8
@@ -85,4 +122,57 @@ def tint_avatar(hue_shift: float, base_avatar: Optional[Image.Image] = None) -> 
     out = np.stack([r2, g2, b2], axis=-1)
     out = (np.clip(out, 0.0, 1.0) * 255).astype("uint8")
 
-    return Image.fromarray(out)
+    rgb_out = Image.fromarray(out, mode="RGB")
+    # Reattach alpha
+    rgba_out = Image.merge("RGBA", (*rgb_out.split(), alpha))
+    return rgba_out
+
+
+# ---------------------------------------------------------------------------
+# Profile-aware helpers
+# ---------------------------------------------------------------------------
+
+def get_tinted_avatar_for_profile(profile: Profile) -> Image.Image:
+    """
+    Return a tinted avatar image for the given profile, using its avatar_hue_shift
+    if present, or 0.0 as a default.
+    """
+    hue_shift = getattr(profile, "avatar_hue_shift", 0.0) or 0.0
+    base = load_base_avatar()
+    return tint_avatar(hue_shift=hue_shift, base_avatar=base)
+
+
+def make_circular(image: Image.Image, size: int = 64) -> Image.Image:
+    """
+    Resize an image to a square of the given size and apply a circular alpha mask,
+    returning a circular RGBA avatar.
+    """
+    image = image.convert("RGBA")
+    # Center-crop to square then resize
+    w, h = image.size
+    side = min(w, h)
+    left = (w - side) // 2
+    top = (h - side) // 2
+    image = image.crop((left, top, left + side, top + side))
+    image = image.resize((size, size), Image.LANCZOS)
+
+    # Circular mask
+    mask = Image.new("L", (size, size), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.ellipse((0, 0, size, size), fill=255)
+
+    circular = Image.new("RGBA", (size, size))
+    circular.paste(image, (0, 0), mask)
+    return circular
+
+
+def get_circular_avatar_for_profile(profile: Profile, size: int = 40) -> Image.Image:
+    """
+    Return a small, circular avatar image for use in the UI (e.g., in the feed).
+
+    Usage in Streamlit:
+        avatar_img = get_circular_avatar_for_profile(profile, size=40)
+        st.image(avatar_img, width=40)
+    """
+    tinted = get_tinted_avatar_for_profile(profile)
+    return make_circular(tinted, size=size)

@@ -119,6 +119,12 @@ def generate_agent_reply_for_session(
     """
     Given an active SimulationEvent and a conversation, have the agent send the next message.
     Uses recent chat history as context.
+
+    The agent is also responsible for deciding whether the simulation should END.
+    If it decides to end, this function will:
+    - Mark event.is_active = False
+    - Run evaluation to fill outcome_label and evaluation_summary
+    - Still return the final DMMessage (if any) so the chat looks natural.
     """
     scenario = get_scenario_by_id(event.scenario_id)
     if scenario is None:
@@ -131,7 +137,7 @@ def generate_agent_reply_for_session(
     system_part = scenario.system_prompt_template.format(
         child_age=child.config.age
     )
-    # We augment the user prompt with the chat history and instructions
+
     user_prompt = f"""
 The child is around {child.config.age} years old.
 You are continuing the same scenario as before.
@@ -139,34 +145,82 @@ You are continuing the same scenario as before.
 Here is the recent chat between you and the child:
 {chat_history}
 
-Write the NEXT message you send as the partner.
-Keep it 1–2 sentences, stay in character, and keep pushing the scenario in a kid-safe way.
-Do NOT mention AI, simulation, or training.
+Your goals:
+- Stay in character as the partner for this scenario.
+- Continue pushing the scenario in a kid-safe way, without explicit or traumatic content.
+- If the child has clearly:
+  * given multiple unsafe or dangerous responses (e.g., sharing personal info, agreeing to risky requests), OR
+  * demonstrated clear resistance / safe behavior and further pushing would be unkind or unnecessary,
+  you should END the simulation.
+
+When you decide what to do, format your answer EXACTLY like this:
+
+Message: <the next message you send as the partner, 1–2 sentences, or 'NONE' if you will not send any more messages>
+EndState: CONTINUE or END
+Reason: <brief internal note to the parent/simulator explaining why you chose CONTINUE or END>
+
+Do NOT mention AI, simulation, or training in the Message line. The child only sees the Message content.
 """
 
     prompt = system_part.strip() + "\n\n" + user_prompt.strip()
 
     try:
-        text = call_llm(prompt, backend=backend, model=model_name)
+        raw = call_llm(prompt, backend=backend, model=model_name)
     except Exception:
         # If we can't generate a follow-up, silently abort for now
         return None
 
-    now = datetime.utcnow()
+    # Parse the structured response
+    message_text = ""
+    end_state = "CONTINUE"
 
-    sim_msg = DMMessage(
-        id=make_id("dm"),
-        child_id=child.id,
-        conversation_id=conv_id,
-        sender_profile_id=event.partner_profile_id,
-        receiver_profile_id=child.profile_id,
-        text=text,
-        created_at=now,
-        is_simulation=True,
-        simulation_tag=event.scenario_id,
-    )
-    child.dm_messages.append(sim_msg)
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    for line in lines:
+        lower = line.lower()
+        if lower.startswith("message:"):
+            message_text = line.split(":", 1)[1].strip()
+        elif lower.startswith("endstate:"):
+            end_state = line.split(":", 1)[1].strip().upper()
+
+    # If message_text is NONE (or empty), we don't send a visible message
+    if message_text.upper() == "NONE":
+        message_text = ""
+
+    now = datetime.utcnow()
+    sim_msg: Optional[DMMessage] = None
+
+    if message_text:
+        sim_msg = DMMessage(
+            id=make_id("dm"),
+            child_id=child.id,
+            conversation_id=conv_id,
+            sender_profile_id=event.partner_profile_id,
+            receiver_profile_id=child.profile_id,
+            text=message_text,
+            created_at=now,
+            is_simulation=True,
+            simulation_tag=event.scenario_id,
+        )
+        child.dm_messages.append(sim_msg)
+
+    # If the agent decided to END, mark the session inactive and evaluate it
+    if end_state == "END":
+        event.is_active = False
+
+        # Run evaluation immediately so the parent doesn't have to do it manually
+        label, summary = evaluate_simulation_session(
+            garden=garden,
+            child=child,
+            event=event,
+            backend=backend,
+            model_name=model_name,
+            conv_id=conv_id,
+        )
+        event.outcome_label = label
+        event.evaluation_summary = summary
+
     return sim_msg
+
 
 
 def evaluate_simulation_session(

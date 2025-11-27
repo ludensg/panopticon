@@ -5,6 +5,11 @@ from __future__ import annotations
 import random
 from typing import List
 
+from datetime import datetime
+from urllib.parse import quote_plus
+
+from image_search import search_image_for_topic
+
 from models import (
     ChildState,
     GardenState,
@@ -33,7 +38,7 @@ def _sample_topics(child: ChildState) -> List[str]:
     if not interests:
         return ["general"] * child.config.max_posts
 
-    max_posts = child.config.max_posts
+    max_posts = get_effective_max_posts(child)
     topics = [i.topic for i in interests]
     weights = [i.weight for i in interests]
     total = sum(weights) or 1.0
@@ -52,6 +57,33 @@ def _sample_topics(child: ChildState) -> List[str]:
 
     random.shuffle(sampled)
     return sampled
+
+def get_effective_max_posts(child: ChildState) -> int:
+    """
+    Decide how many posts to show based on time of day and child's config.
+    Simple version:
+    - Quiet hours: use max_posts_quiet if set, else max_posts.
+    - Normal hours: use max_posts.
+    Quiet hours are 08:00–15:00 and 21:00–07:00 (tweak as needed).
+    """
+    base = child.config.max_posts
+    quiet = child.config.max_posts_quiet or base
+
+    hour = datetime.now().hour  # server local time
+    # Example quiet windows: school-ish & late night
+    in_quiet = (8 <= hour < 15) or (21 <= hour or hour < 7)
+    return quiet if in_quiet else base
+
+
+def get_image_url_for_topic(topic: str) -> str:
+    """
+    Very simple web image strategy:
+    Use Unsplash's source endpoint to get a random featured image by topic.
+    This avoids needing an API key and is fine for a prototype.
+    """
+    q = quote_plus(topic)
+    return f"https://source.unsplash.com/featured/?{q}"
+
 
 
 def _find_or_create_profile_for_topic(
@@ -115,6 +147,12 @@ def generate_feed_for_child(
     for topic in topics:
         author_profile = _find_or_create_profile_for_topic(garden, topic, child.config.mode)
 
+        # Decide whether this post should be "news-like" or "personal update"
+        if random.random() < child.config.news_ratio:
+            post_flavor = "kid-friendly news"
+        else:
+            post_flavor = "personal update"
+
         base_prompt = REALISTIC_PROMPT if child.config.mode == "realistic" else GAMIFIED_PROMPT
         prompt = base_prompt.format(
             child_age=child.config.age,
@@ -122,6 +160,7 @@ def generate_feed_for_child(
             personality_tags=", ".join(author_profile.personality_tags),
             author_name=author_profile.display_name,
             child_interests=child_interests_str,
+            post_flavor=post_flavor,
         )
 
         try:
@@ -131,6 +170,12 @@ def generate_feed_for_child(
 
         text = sanitize_post_text(raw)
 
+        # Decide if this post should include an image
+        image_url = None
+        if random.random() < child.config.image_ratio:
+            # Try to fetch a kid-safe image URL from Pixabay
+            image_url = search_image_for_topic(topic)
+
         post = Post(
             id=make_id("post"),
             child_id=child.id,
@@ -139,8 +184,11 @@ def generate_feed_for_child(
             text=text,
             topic=topic,
             mode=child.config.mode,
+            image_url=image_url,
         )
+
         posts.append(post)
 
     child.posts = posts
     return posts
+

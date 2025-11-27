@@ -28,8 +28,15 @@ class ChildConfig:
     name: str
     age: int
     interests: List[Interest]
-    mode: ModeLiteral
-    max_posts: int = 10
+    mode: Literal["realistic", "gamified"]
+    max_posts: int  # baseline max posts
+    # Max posts allowed during quiet hours (e.g., school time / late night).
+    # If None, defaults to max_posts.
+    max_posts_quiet: Optional[int] = None
+    # Fraction of posts (0.0–1.0) that should be in "kid-friendly news" style.
+    news_ratio: float = 0.3
+    # Fraction of posts (0.0–1.0) that should include a web image.
+    image_ratio: float = 0.4
 
 
 ProfileRole = Literal["child", "parent", "friend", "synthetic", "system"]
@@ -58,7 +65,8 @@ class Post:
     author_name: str
     text: str
     topic: str
-    mode: ModeLiteral
+    mode: Literal["realistic", "gamified"]
+    image_url: Optional[str] = None  # optional web image related to topic
 
 
 @dataclass
