@@ -321,6 +321,136 @@ If `image_ratio` is met:
 ### **Avatar Tinting**
 Using HSV rotation and circular cropping, to generate diverse-looking friend profiles.
 
+## **Prompt System Refinement & Polishing**
+
+Panopticon’s feed generation now uses a fully redesigned **dual-mode prompt system** (Realistic + Gamified) built with *adaptive modeling*, *specificity requirements*, and *responsible-AI constraints*.  
+This overhaul replaces earlier generic templates with a robust, highly structured prompt architecture that produces safer, more natural, and more educational posts.
+
+### **Goals of the Redesign**
+
+The new prompts were engineered to solve several core problems observed in naive LLM post generation:
+
+- **Generic outputs** lacking detail (“I love games—they’re fun”)
+- **Uncanny kid voices** (overly childish tone, forced enthusiasm)
+- **Inconsistent safety behavior** (occasional oversharing or vague boundaries)
+- **Neglect of the child’s adaptive skill profile**
+- **Insufficient differentiation** between “Realistic” and “Gamified” feed modes
+- **Repetitive structure** due to limited flavor variety
+
+The rewritten prompts solve these failures by incorporating a more explicit structure, clearly defined writing constraints, and an adaptive modeling layer.
+
+---
+
+### **Key Improvements**
+
+#### ✔ **1. Stronger Adaptive Behavior Integration**
+
+Each post uses `{adaptive_context}` to *quietly* model healthy online behaviors:
+
+- Low boundary-setting → character respectfully sets limits  
+- Low info-sharing safety → character avoids specifics safely  
+- Low peer-pressure resistance → character chooses their own path  
+- Low emotional clarity → character names simple feelings  
+- High curiosity → post ends with a small question or exploration  
+
+These behaviors are **demonstrated**, never lectured.
+
+---
+
+#### ✔ **2. Specificity & Detail Requirements**
+
+The prompts now enforce a minimum level of concreteness:
+
+- Named games, levels, characters, missions  
+- Specific animals, phenomena, tools  
+- Actual facts or plausible 2020s events in news flavor  
+- “Micro-story” style personal updates
+
+This prevents generic LLM language and keeps posts engaging.
+
+---
+
+#### ✔ **3. Clear Separation of Modes**
+
+The Realistic and Gamified prompts now differ across:
+
+- Tone  
+- Emoji rules  
+- Rhythm & sentence cadence  
+- Allowed metaphors  
+- Expressiveness level  
+- Narrative patterns  
+
+**Realistic mode** feels grounded and natural.  
+**Gamified mode** feels intentionally playful and fictional.
+
+---
+
+#### ✔ **4. Safety-First Behavior Encoding**
+
+The polished prompts systematically avoid:
+
+- Sensitive personal details (locations, schedules, last names)  
+- AI/meta references (“as an AI…”)  
+- Fear-based or graphic content  
+- Adult themes or emotionally intense material  
+
+They also require respectful tone and age-appropriate language.
+
+---
+
+#### ✔ **5. Sub-Flavor Taxonomy for Variation**
+
+An optional `{sub_flavor}` parameter allows finer-grained post types:
+
+- `personal_story`  
+- `tiny_tip`  
+- `cool_fact`  
+- `behind_the_scenes`  
+- `mistake_and_fix`  
+- `curiosity_hook`  
+- `micro_debate`  
+- `quiet_win`  
+
+This helps diversify the feed and prevent repetition.
+
+---
+
+### **Final Prompt Architecture**
+
+Each prompt now includes:
+
+1. **Adaptive Context Block** – processed behaviorally  
+2. **Writing Context Block** – child age, topic, persona, etc.  
+3. **Content Requirements** – specificity, detail, safety  
+4. **Style Rules** – mode-dependent  
+5. **Adaptivity Rules** – implicit behavioral modeling  
+6. **Flavor Rules** – personal update vs kid-friendly news  
+7. **Output Constraint** – return only the post text
+
+This architecture ensures posts are:
+
+- Realistic  
+- Child-safe  
+- Behaviorally educational  
+- Diverse  
+- Personality-rich  
+- Specific and non-generic  
+
+---
+
+### **Outcome**
+
+The polished prompts allow Panopticon to produce:
+
+- Believable social posts with actual content  
+- Fictional, playful posts that are clearly not real  
+- Feed entries that *teach through modeling* without patronizing  
+- Posts that vary by topic, author persona, child age, and adaptive skills  
+- A safer, more engaging system that grows with the child’s needs  
+
+These refined prompts anchor the entire feed generation pipeline and form the backbone of Panopticon’s adaptive social simulation.
+
 
 ## Adaptive Feed & Child Skill Profile
 
