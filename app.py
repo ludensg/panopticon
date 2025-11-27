@@ -2,6 +2,7 @@
 
 import streamlit as st
 from typing import Dict
+import random
 
 from models import (
     GardenState,
@@ -9,10 +10,23 @@ from models import (
     Interest,
     ChildState,
     make_id,
+    Profile
 )
 from avatar_utils import load_base_avatar, tint_avatar
 from feed_generator import generate_feed_for_child  # we'll define this function
 from datetime import datetime
+from scenarios import get_scenarios_for_child_age, get_scenario_by_id
+from models import SimulationEvent
+
+from simulation_engine import (
+    start_simulation_session,
+    generate_agent_reply_for_session,
+    evaluate_simulation_session,
+)
+
+
+from llm_client import call_llm  # for simulation LLM injection
+
 
 
 # ---------- Session state setup ----------
@@ -30,6 +44,87 @@ def create_default_garden(name: str = "Default Garden") -> GardenState:
     )
     garden.add_child(default_config)
     return garden
+
+def get_feed_llm_config():
+    """
+    Returns (backend, model_name) for the feed generator.
+    """
+    backend = st.session_state.get("llm_backend", "openai")
+    if backend == "openai":
+        model_name = st.session_state.get("openai_model", "gpt-4.1-mini")
+    else:
+        model_name = st.session_state.get("ollama_model", "llama3")
+    return backend, model_name
+
+
+def get_sim_llm_config():
+    """
+    Returns (backend, model_name) for simulations.
+    If simulation mode is 'same_as_feed', reuse feed config.
+    """
+    mode = st.session_state.get("sim_llm_mode", "same_as_feed")
+    feed_backend, feed_model = get_feed_llm_config()
+
+    if mode == "same_as_feed":
+        return feed_backend, feed_model
+
+    if mode == "openai":
+        backend = "openai"
+        model_name = st.session_state.get("sim_openai_model", "gpt-4.1-mini")
+        return backend, model_name
+
+    if mode == "ollama":
+        backend = "ollama"
+        model_name = st.session_state.get("sim_ollama_model", "llama3")
+        return backend, model_name
+
+    # Fallback
+    return feed_backend, feed_model
+
+
+def create_simulation_profile_for_child(garden: GardenState, child: ChildState, scenario_id: str) -> Profile:
+    """
+    Create a new synthetic profile to act as the simulation agent for this child.
+    Profile is themed loosely around the scenario and child's mode.
+    """
+    scen = get_scenario_by_id(scenario_id)
+
+    # Simple name pool; you can tune this later
+    base_names = ["SkyBuddy", "NewFriend", "GamePal", "StarChatter", "PixelMate", "ChatVoyager"]
+    display_name = random.choice(base_names) + str(random.randint(10, 999))
+
+    personality_pool = [
+        "curious",
+        "outgoing",
+        "chatty",
+        "confident",
+        "playful",
+        "casual",
+    ]
+    personality_tags = random.sample(personality_pool, k=2)
+
+    # Topic tag; use scenario risk_type if available
+    if scen is not None:
+        topics = [scen.risk_type, "chat"]
+    else:
+        topics = ["chat"]
+
+    avatar_style = "cartoony" if child.config.mode == "gamified" else "realistic"
+    hue_shift = random.random()
+
+    profile = Profile(
+        id=make_id("profile"),
+        role="synthetic",
+        display_name=display_name,
+        avatar_style=avatar_style,
+        personality_tags=personality_tags,
+        topics=topics,
+        is_parent_controlled=False,
+        avatar_hue_shift=hue_shift,
+    )
+    garden.profiles.append(profile)
+    return profile
+
 
 
 def init_session_state():
@@ -68,6 +163,7 @@ def init_session_state():
             st.session_state.active_child_id = new_child.id
         else:
             st.session_state.active_child_id = next(iter(garden.children.keys()))
+    
 
 
 def get_active_garden() -> GardenState:
@@ -239,6 +335,35 @@ def sidebar_garden_and_child_management():
         help="Make sure you've pulled this model with `ollama pull <model>`.",
     )
 
+    # ---- Simulation backend selection ----
+    st.sidebar.subheader("Simulation Backend")
+
+    sim_mode = st.sidebar.radio(
+        "Simulation backend",
+        options=["same_as_feed", "openai", "ollama"],
+        index=0,
+        format_func=lambda x: {
+            "same_as_feed": "Same as feed settings",
+            "openai": "OpenAI (override)",
+            "ollama": "Ollama (override)",
+        }[x],
+        key="sim_llm_mode",
+        help="Choose whether simulations use the same backend as the feed or a separate one.",
+    )
+
+    st.sidebar.text_input(
+        "Simulation OpenAI model",
+        value=st.session_state.get("sim_openai_model", "gpt-4.1-mini"),
+        key="sim_openai_model",
+    )
+
+    st.sidebar.text_input(
+        "Simulation Ollama model",
+        value=st.session_state.get("sim_ollama_model", "llama3"),
+        key="sim_ollama_model",
+    )
+
+
 
 
 
@@ -368,6 +493,92 @@ def dm_tab(garden: GardenState, child: ChildState):
 
         st.markdown(f"**Chat between {child.config.name} and {other_name}**")
 
+        # --- Simulation controls (session-based) ---
+        st.markdown("##### Simulation tools")
+
+        # Simulations only make sense with non-child partners
+        if other_profile is None or other_profile.role == "child":
+            st.info("Simulation agents can only be attached to non-child profiles.")
+        else:
+            scenarios = get_scenarios_for_child_age(child.config.age)
+
+            # Check if there's an active session for this child + partner
+            active_events = [
+                e
+                for e in child.simulation_events
+                if e.partner_profile_id == other_profile_id and e.is_active
+            ]
+            active_event = None
+            if active_events:
+                active_events.sort(key=lambda e: e.created_at, reverse=True)
+                active_event = active_events[0]
+
+            if active_event is None:
+                # No active session: allow starting one
+                if scenarios:
+                    scenario_labels = {f"{s.title} ({s.risk_type})": s.id for s in scenarios}
+                    default_label = list(scenario_labels.keys())[0]
+                    chosen_label = st.selectbox(
+                        "Start a simulation scenario in this conversation",
+                        options=list(scenario_labels.keys()),
+                        index=list(scenario_labels.keys()).index(default_label),
+                        key=f"scenario_select_{child.id}",
+                    )
+                    chosen_scenario_id = scenario_labels[chosen_label]
+
+                    if st.button("Start simulation session", key=f"start_sim_{child.id}"):
+                        backend, model_name = get_sim_llm_config()
+                        conv_id = f"conv_{child.id}_{other_profile_id}"
+                        try:
+                            event, _sim_msg = start_simulation_session(
+                                garden=garden,
+                                child=child,
+                                scenario_id=chosen_scenario_id,
+                                partner_profile_id=other_profile_id,
+                                backend=backend,
+                                model_name=model_name,
+                                conv_id=conv_id,
+                            )
+                            st.success(
+                                f"Started simulation '{chosen_label}' using {backend} ({model_name})."
+                            )
+                            st.rerun()
+                        except Exception as e:
+                            st.warning(f"Could not start simulation: {e}")
+                else:
+                    st.info("No scenarios available for this age yet.")
+            else:
+                # There is an active session
+                from scenarios import get_scenario_by_id
+
+                scen = get_scenario_by_id(active_event.scenario_id)
+                scen_title = scen.title if scen else active_event.scenario_id
+                st.markdown(
+                    f"**Active simulation:** {scen_title}  \n"
+                    f"Backend: {active_event.backend_used or 'n/a'}  "
+                    f"Model: {active_event.model_used or 'n/a'}"
+                )
+                if st.button("End simulation & evaluate", key=f"end_eval_sim_{child.id}"):
+                    backend, model_name = get_sim_llm_config()
+                    conv_id = f"conv_{child.id}_{other_profile_id}"
+                    label, summary = evaluate_simulation_session(
+                        garden=garden,
+                        child=child,
+                        event=active_event,
+                        backend=backend,
+                        model_name=model_name,
+                        conv_id=conv_id,
+                    )
+                    active_event.outcome_label = label
+                    active_event.evaluation_summary = summary
+                    active_event.is_active = False
+                    st.success(f"Simulation evaluated: {label}")
+                    st.info(summary)
+                    st.rerun()
+
+        st.markdown("---")
+
+        # --- Existing message history ---
         conv_id = f"conv_{child.id}_{other_profile_id}"
         history = [m for m in child.dm_messages if m.conversation_id == conv_id]
         history = sorted(history, key=lambda m: m.created_at)
@@ -377,7 +588,11 @@ def dm_tab(garden: GardenState, child: ChildState):
                 sender = garden.get_profile_by_id(msg.sender_profile_id)
                 sender_name = sender.display_name if sender else "Unknown"
                 prefix = "🧒" if msg.sender_profile_id == child.profile_id else "👤"
-                st.markdown(f"{prefix} **{sender_name}:** {msg.text}")
+                # Mark simulation messages
+                tag = ""
+                if msg.is_simulation:
+                    tag = " _(simulation)_"
+                st.markdown(f"{prefix} **{sender_name}:** {msg.text}{tag}")
         else:
             st.info("No messages yet in this conversation.")
 
@@ -406,16 +621,25 @@ def dm_tab(garden: GardenState, child: ChildState):
                 )
                 child.dm_messages.append(msg)
 
+                # Attach this as the first reply to the latest simulation event (if any)
+                pending_events = [
+                    e
+                    for e in child.simulation_events
+                    if e.partner_profile_id == other_profile_id and e.child_reply_message_id is None
+                ]
+                if pending_events:
+                    pending_events.sort(key=lambda e: e.created_at, reverse=True)
+                    latest_event = pending_events[0]
+                    latest_event.child_reply_message_id = msg.id
+
                 # If the other profile is another child, mirror the message into their DM list too
                 other_profile = garden.get_profile_by_id(other_profile_id)
                 if other_profile and other_profile.role == "child":
-                    # Find the ChildState that owns this profile
                     other_child = None
                     for c in garden.list_children():
                         if c.profile_id == other_profile_id:
                             other_child = c
                             break
-
                     if other_child is not None:
                         other_conv_id = f"conv_{other_child.id}_{child.profile_id}"
                         mirrored_msg = DMMessage(
@@ -429,54 +653,221 @@ def dm_tab(garden: GardenState, child: ChildState):
                         )
                         other_child.dm_messages.append(mirrored_msg)
 
+                # If there's an active simulation session with this partner, generate agent reply
+                active_events = [
+                    e
+                    for e in child.simulation_events
+                    if e.partner_profile_id == other_profile_id and e.is_active
+                ]
+                if active_events and (other_profile is None or other_profile.role != "child"):
+                    active_events.sort(key=lambda e: e.created_at, reverse=True)
+                    active_event = active_events[0]
+                    backend, model_name = get_sim_llm_config()
+                    agent_msg = generate_agent_reply_for_session(
+                        garden=garden,
+                        child=child,
+                        event=active_event,
+                        backend=backend,
+                        model_name=model_name,
+                        conv_id=conv_id,
+                    )
+                    # agent_msg is already added to child.dm_messages inside the function
+
                 st.success("Message sent.")
                 st.rerun()
             else:
                 st.warning("Please type a message before sending.")
 
 
+def analytics_tab(garden: GardenState, child: ChildState) -> None:
+    st.header(f"Analytics for {child.config.name}")
 
+    # --- Basic stats ---
+    st.subheader("Overview")
 
-def analytics_tab(garden: GardenState, child: ChildState):
-    st.subheader("Analytics (basic)")
-    st.write("This will show topic distributions, simulation outcomes, etc.")
-    st.write("For now, just showing some raw counts:")
+    st.write(
+        f"- Age: **{child.config.age}**  \n"
+        f"- Mode: **{child.config.mode}**  \n"
+        f"- Posts generated: **{len(child.posts)}**  \n"
+        f"- DM messages: **{len(child.dm_messages)}**  \n"
+        f"- Simulation sessions: **{len(child.simulation_events)}**"
+    )
 
-    from collections import Counter
+    st.markdown("---")
 
-    topics = [p.topic for p in child.posts]
-    topic_counts = Counter(topics)
-    st.markdown("**Topics in feed:**")
-    if topic_counts:
-        for topic, count in topic_counts.items():
-            st.write(f"- {topic}: {count} posts")
+    # --- Quick auto simulation (one-click) ---
+    st.subheader("Quick auto simulation")
+
+    scenarios = get_scenarios_for_child_age(child.config.age)
+    if not scenarios:
+        st.info("No scenarios available for this child's age yet.")
     else:
-        st.write("- (no posts yet)")
+        # Build choices
+        scenario_labels = {f"{s.title} ({s.risk_type})": s.id for s in scenarios}
+        default_label = list(scenario_labels.keys())[0]
 
-    st.markdown("**DMs by conversation partner:**")
-    partner_counts = Counter()
-    for msg in child.dm_messages:
-        if msg.sender_profile_id == child.profile_id:
-            other_id = msg.receiver_profile_id
+        chosen_label = st.selectbox(
+            "Choose a scenario to auto-run",
+            options=list(scenario_labels.keys()),
+            index=list(scenario_labels.keys()).index(default_label),
+            key=f"auto_sim_scenario_{child.id}",
+        )
+        chosen_scenario_id = scenario_labels[chosen_label]
+
+        if st.button("Run auto simulation now", key=f"auto_sim_run_{child.id}"):
+            backend, model_name = get_sim_llm_config()
+            # 1) Create a new synthetic profile as the agent
+            profile = create_simulation_profile_for_child(
+                garden=garden,
+                child=child,
+                scenario_id=chosen_scenario_id,
+            )
+            # 2) Conversation id between this child and the new agent profile
+            conv_id = f"conv_{child.id}_{profile.id}"
+
+            try:
+                # 3) Start the simulation session (inject first message)
+                event, _sim_msg = start_simulation_session(
+                    garden=garden,
+                    child=child,
+                    scenario_id=chosen_scenario_id,
+                    partner_profile_id=profile.id,
+                    backend=backend,
+                    model_name=model_name,
+                    conv_id=conv_id,
+                )
+                # No pending agent reply yet; first move was just created above.
+
+                st.success(
+                    f"Started auto simulation '{chosen_label}' with profile **{profile.display_name}** "
+                    f"using {backend} ({model_name}). "
+                    "The child will see a new chat with this profile."
+                )
+                st.rerun()
+            except Exception as e:
+                st.warning(f"Could not start auto simulation: {e}")
+
+    st.markdown("---")
+    st.subheader("Simulation sessions")
+
+    events = sorted(child.simulation_events, key=lambda e: e.created_at, reverse=True)
+
+    if not events:
+        st.info("No simulation sessions have been run for this child yet.")
+        return
+
+    # ---- Helper: status + badges ----
+    def get_status(e) -> str:
+        return (e.outcome_label or "UNEVALUATED").upper()
+
+    def status_badge(status: str) -> str:
+        status = status.upper()
+        if status == "SAFE":
+            return "🟢 SAFE"
+        if status == "UNSAFE":
+            return "🔴 UNSAFE"
+        if status in ("NEEDS_REVIEW", "NEEDS REVIEW"):
+            return "🟡 NEEDS REVIEW"
+        return "⚪ UNEVALUATED"
+
+    # ---- Filter by outcome ----
+    status_options = ["All statuses", "SAFE", "UNSAFE", "NEEDS_REVIEW", "UNEVALUATED"]
+    status_choice = st.selectbox(
+        "Filter sessions by outcome",
+        options=status_options,
+        index=0,
+        key=f"sim_status_filter_{child.id}",
+    )
+
+    if status_choice == "All statuses":
+        filtered_events = events
+    else:
+        filtered_events = [
+            e for e in events
+            if get_status(e) == status_choice
+        ]
+
+    if not filtered_events:
+        st.info(f"No simulation sessions matching filter: **{status_choice}**.")
+        return
+
+    # ---- "Carousel" of runs with short titles ----
+    label_to_event = {}
+    option_labels = []
+
+    for e in filtered_events:
+        scen = get_scenario_by_id(e.scenario_id)
+        scen_title = scen.title if scen else e.scenario_id
+        status = get_status(e)
+        badge = status_badge(status)
+        ts_str = e.created_at.strftime("%Y-%m-%d %H:%M")
+
+        # Global run number (stable across filters)
+        global_index = events.index(e)  # 0 = newest
+        run_no = len(events) - global_index  # oldest = 1, newest = len(events)
+
+        label = f"Run #{run_no} – {scen_title} • {badge} • {ts_str}"
+        option_labels.append(label)
+        label_to_event[label] = e
+
+    selected_label = st.selectbox(
+        "Select a simulation session",
+        options=option_labels,
+        key=f"sim_session_select_{child.id}",
+    )
+    event = label_to_event[selected_label]
+
+    scen = get_scenario_by_id(event.scenario_id)
+    scen_title = scen.title if scen else event.scenario_id
+    status = get_status(event)
+    badge = status_badge(status)
+
+    st.markdown(f"### {scen_title}")
+    st.write(f"- **Run ID:** `{event.id}`")
+    st.write(f"- **Outcome:** {badge}")
+    st.write(f"- Partner profile ID: `{event.partner_profile_id}`")
+    st.write(f"- Started at: `{event.created_at.isoformat(timespec='seconds')}`")
+    st.write(f"- Backend: **{event.backend_used or 'n/a'}**, model: **{event.model_used or 'n/a'}**")
+    st.write(f"- Active: **{event.is_active}**")
+
+    # Outcome summary
+    st.markdown("#### Outcome summary")
+
+    if event.evaluation_summary:
+        st.markdown("**Summary for parent:**")
+        st.write(event.evaluation_summary)
+    else:
+        st.info("This simulation has not been evaluated yet. Use 'End simulation & evaluate' in the DMs tab.")
+
+    # Conversation transcript
+    st.markdown("#### Conversation transcript")
+
+    with st.expander("View chat log", expanded=False):
+        conv_id = f"conv_{child.id}_{event.partner_profile_id}"
+        messages = [
+            m for m in child.dm_messages if m.conversation_id == conv_id
+        ]
+        messages.sort(key=lambda m: m.created_at)
+
+        if not messages:
+            st.info("No messages found for this simulation conversation.")
         else:
-            other_id = msg.sender_profile_id
-        partner_counts[other_id] += 1
+            for m in messages:
+                sender = garden.get_profile_by_id(m.sender_profile_id)
+                sender_name = sender.display_name if sender else "Unknown"
+                is_child = m.sender_profile_id == child.profile_id
 
-    if partner_counts:
-        for pid, count in partner_counts.items():
-            prof = garden.get_profile_by_id(pid)
-            name = prof.display_name if prof else pid
-            st.write(f"- {name}: {count} messages")
-    else:
-        st.write("- (no DMs yet)")
+                prefix = "🧒 CHILD" if is_child else "👤 PARTNER"
+                sim_tag = " _(simulation)_" if m.is_simulation else ""
+                timestamp = m.created_at.strftime("%Y-%m-%d %H:%M:%S")
 
-    sim_counts = Counter(m.simulation_tag for m in child.dm_messages if m.is_simulation)
-    st.markdown("**Simulation events (by tag):**")
-    if sim_counts:
-        for tag, count in sim_counts.items():
-            st.write(f"- {tag or '(untagged)'}: {count}")
-    else:
-        st.write("- (no simulation events yet)")
+                st.markdown(
+                    f"{prefix}{sim_tag}  \n"
+                    f"**{sender_name}** at `{timestamp}`  \n"
+                    f"{m.text}"
+                )
+
+
 
 
 # ---------- Main ----------

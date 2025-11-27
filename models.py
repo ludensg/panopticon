@@ -79,6 +79,48 @@ class DMMessage:
         data["created_at"] = self.created_at.isoformat()
         return data
 
+@dataclass
+class SimulationEvent:
+    """
+    Represents a full simulation session for a given child + scenario + partner.
+    It has:
+    - An initial injected message from the partner (incoming_message_id),
+    - The child's first reply (child_reply_message_id),
+    - An eventual evaluation (outcome_label + evaluation_summary).
+    """
+    id: str
+    child_id: str
+    scenario_id: str
+    partner_profile_id: str
+    created_at: datetime
+    incoming_message_id: str  # DMMessage.id of the first injected risky message
+    child_reply_message_id: Optional[str] = None  # DMMessage.id of first reply
+    outcome_label: Optional[str] = None  # "SAFE", "UNSAFE", "NEEDS_REVIEW"
+    backend_used: Optional[str] = None
+    model_used: Optional[str] = None
+    is_active: bool = True
+    evaluation_summary: Optional[str] = None  # short explanation for the parent
+
+
+
+
+@dataclass
+class SimulationScenario:
+    """
+    Static description of a simulation scenario type (library item).
+    """
+    id: str
+    title: str
+    description: str
+    risk_type: str  # e.g. "privacy", "pressure", "bullying"
+    recommended_age_min: int
+    recommended_age_max: int
+    # For future LLM use:
+    system_prompt_template: str
+    user_message_template: str
+    # For now, a canned message we can inject without LLM:
+    canned_message_template: str
+
 
 # Forward declaration for type hints
 @dataclass
@@ -88,6 +130,7 @@ class ChildState:
     profile_id: str  # Profile used when sending messages as this child
     posts: List[Post] = field(default_factory=list)
     dm_messages: List[DMMessage] = field(default_factory=list)
+    simulation_events: List[SimulationEvent] = field(default_factory=list)
 
     # Convenience methods (kept minimal; garden knows about profiles)
     def summary(self) -> Dict:
@@ -97,7 +140,9 @@ class ChildState:
             "mode": self.config.mode,
             "posts_count": len(self.posts),
             "dm_count": len(self.dm_messages),
+            "simulation_events_count": len(self.simulation_events),
         }
+
 
 
 @dataclass
