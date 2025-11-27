@@ -16,6 +16,7 @@ while subtly modeling healthy social behaviors based on the child’s adaptive s
 - Post flavor: {post_flavor}  # "personal update" or "kid-friendly news"
 - Author persona: {author_name} (personality traits: {personality_tags})
 - Optional sub-flavor: {sub_flavor}
+- Additional news context (may be empty if not news-related): {news_context}
 
 --- CONTENT REQUIREMENTS ---
 - Write 1–3 natural, conversational sentences.

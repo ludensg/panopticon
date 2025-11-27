@@ -22,6 +22,8 @@ PIXABAY_API_KEY = os.environ.get("PIXABAY_API_KEY")
 def search_image_for_topic(topic: str) -> Optional[str]:
     """
     Return a URL for a kid-safe image related to `topic`, or None on any error.
+    The parameter name is `topic` for historical reasons, but it can be any
+    search query, e.g. "Sonic Heroes video game", "Mars rover NASA", etc.
 
     We call Pixabay with:
     - safesearch=true  -> only images suitable for all ages

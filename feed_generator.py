@@ -9,6 +9,7 @@ from datetime import datetime
 from urllib.parse import quote_plus
 
 from image_search import search_image_for_topic
+from news_fetcher import get_child_news_for_topic, NewsItem
 
 from models import (
     ChildState,
@@ -146,6 +147,51 @@ def _find_or_create_profile_for_topic(
     garden.profiles.append(profile)
     return profile
 
+STOPWORDS = {
+    "the", "a", "an", "and", "or", "but",
+    "to", "for", "in", "on", "at", "of",
+    "is", "are", "was", "were", "be", "been", "being",
+    "i", "you", "he", "she", "they", "we", "it",
+    "this", "that", "these", "those",
+    "my", "your", "his", "her", "their", "our",
+    "with", "about", "from", "as", "by",
+}
+
+
+def build_image_query(topic: str, text: str, max_terms: int = 4) -> str:
+    """
+    Build a more specific image search query from the topic + post text.
+
+    - Extracts non-stopword tokens from the text.
+    - Prefers longer tokens (length >= 4).
+    - Combines up to `max_terms` of them with the topic.
+    """
+    # Extract word-like tokens from text (keep numbers too)
+    tokens = re.findall(r"[A-Za-z0-9]+", text or "")
+    # Filter & normalize
+    candidates = []
+    for t in tokens:
+        low = t.lower()
+        if low in STOPWORDS:
+            continue
+        if len(low) < 4:
+            continue
+        candidates.append(low)
+
+    # De-duplicate preserving order
+    seen = set()
+    filtered = []
+    for c in candidates:
+        if c not in seen:
+            seen.add(c)
+            filtered.append(c)
+
+    key_terms = filtered[:max_terms]
+    if key_terms:
+        return f"{topic} " + " ".join(key_terms)
+    else:
+        return topic
+
 
 def generate_feed_for_child(
     garden: GardenState,
@@ -173,8 +219,28 @@ def generate_feed_for_child(
         else:
             post_flavor = "personal update"
 
-        # NEW: pick a sub_flavor for the prompt
         sub_flavor = choose_sub_flavor(post_flavor)
+
+        # --- NEW: world news integration for "kid-friendly news" ---
+        news_item: NewsItem | None = None
+        if "news" in post_flavor.lower():
+            news_item = get_child_news_for_topic(topic)
+
+        if news_item:
+            news_context = (
+                f"This post should be loosely based on the following real-world article, "
+                f"rewritten in a child-friendly, positive way:\n\n"
+                f"- Title: {news_item.title}\n"
+                f"- Description: {news_item.description}\n"
+                f"- Source: {news_item.source_name}\n"
+            )
+        else:
+            # Fallback: let the model invent a plausible, positive recent development.
+            news_context = (
+                "No specific article is available. Invent a plausible, positive, "
+                "recent development related to the topic that would be interesting "
+                "for a child, avoiding scary or graphic details."
+            )
 
         base_prompt = REALISTIC_PROMPT if child.config.mode == "realistic" else GAMIFIED_PROMPT
         prompt = base_prompt.format(
@@ -185,10 +251,9 @@ def generate_feed_for_child(
             author_name=author_profile.display_name,
             child_interests=child_interests_str,
             post_flavor=post_flavor,
-            sub_flavor=sub_flavor,  # <-- this fixes the KeyError
+            sub_flavor=sub_flavor,
+            news_context=news_context,
         )
-
-
 
         try:
             raw = call_llm(prompt, backend=backend, model=model_name)
@@ -197,11 +262,18 @@ def generate_feed_for_child(
 
         text = sanitize_post_text(raw)
 
-        # Decide if this post should include an image
+        # --- Smarter image query ---
         image_url = None
         if random.random() < child.config.image_ratio:
-            # Try to fetch a kid-safe image URL from Pixabay
-            image_url = search_image_for_topic(topic)
+            # If we have a news article, use its text as the basis;
+            # otherwise, use the generated post text.
+            if news_item:
+                image_text = f"{news_item.title} {news_item.description or ''}"
+            else:
+                image_text = text
+
+            query = build_image_query(topic, image_text)
+            image_url = search_image_for_topic(query)
 
         now = datetime.utcnow()
         post = Post(
@@ -218,14 +290,14 @@ def generate_feed_for_child(
 
         posts.append(post)
 
-    # Instead of replacing the feed, prepend new posts on top of existing ones.
-    # Newest posts first.
+    # Prepend new posts, newest first
     if child.posts:
         child.posts = posts + child.posts
     else:
         child.posts = posts
 
     return child.posts
+
 
 def build_adaptive_context(child: ChildState) -> str:
         sp = child.skill_profile
