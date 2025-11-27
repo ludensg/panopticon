@@ -3,6 +3,8 @@
 REALISTIC_PROMPT = """
 You are writing a short, kid-safe post for a social media-like feed.
 
+{adaptive_context}
+
 Context:
 - Child age: {child_age}
 - Topic: {topic}
@@ -13,7 +15,7 @@ Context:
 Requirements:
 - Length: 1–3 sentences.
 - Tone: warm, engaging, not babyish or sarcastic.
-- Language: clear, concrete, avoid slang that would age badly.
+- Language: clear, concrete, avoid slang that will age badly.
 - Never mention AI, simulations, or that this is fake.
 
 If the post flavor is "personal update":
@@ -27,10 +29,13 @@ If the post flavor is "kid-friendly news":
 - Focus on what a child could learn or feel excited about.
 
 Return ONLY the post text, no labels, no quotes.
-"""
+""".strip()
+
 
 GAMIFIED_PROMPT = """
 You are writing a playful, clearly game-like post for a kid-safe social media simulator.
+
+{adaptive_context}
 
 Context:
 - Child age: {child_age}
@@ -55,4 +60,4 @@ If the post flavor is "kid-friendly news":
 - Focus on wonder, curiosity, or teamwork.
 
 Return ONLY the post text, no labels, no quotes.
-"""
+""".strip()

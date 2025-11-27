@@ -141,6 +141,8 @@ def generate_feed_for_child(
     """
     topics = _sample_topics(child)
     posts: List[Post] = []
+    adaptive_context = build_adaptive_context(child)
+
 
     child_interests_str = ", ".join(i.topic for i in child.config.interests)
 
@@ -155,6 +157,7 @@ def generate_feed_for_child(
 
         base_prompt = REALISTIC_PROMPT if child.config.mode == "realistic" else GAMIFIED_PROMPT
         prompt = base_prompt.format(
+            adaptive_context=adaptive_context,
             child_age=child.config.age,
             topic=topic,
             personality_tags=", ".join(author_profile.personality_tags),
@@ -162,6 +165,7 @@ def generate_feed_for_child(
             child_interests=child_interests_str,
             post_flavor=post_flavor,
         )
+
 
         try:
             raw = call_llm(prompt, backend=backend, model=model_name)
@@ -192,3 +196,20 @@ def generate_feed_for_child(
     child.posts = posts
     return posts
 
+def build_adaptive_context(child: ChildState) -> str:
+        sp = child.skill_profile
+        return f"""
+    Child skill model (0.0 = weaker, 1.0 = stronger):
+
+    - Boundary-setting: {sp.boundary_setting:.2f}
+    - Information safety: {sp.info_sharing_safety:.2f}
+    - Peer pressure resistance: {sp.peer_pressure_resistance:.2f}
+    - Emotional clarity: {sp.emotional_clarity:.2f}
+    - Curiosity: {sp.curiosity:.2f}
+
+    Content goals:
+    - Subtly model behavior that strengthens areas where the child's score is lower.
+    - Show characters who set healthy boundaries and avoid oversharing.
+    - Encourage curiosity and critical thinking without fear or shame.
+    - Keep everything age-appropriate and emotionally supportive.
+    """.strip()

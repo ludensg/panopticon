@@ -43,6 +43,19 @@ ProfileRole = Literal["child", "parent", "friend", "synthetic", "system"]
 AvatarStyle = Literal["cartoony", "realistic", "system"]
 
 
+@dataclass
+class ChildSkillProfile:
+    """
+    Lightweight skill model per child.
+    Values are in [0.0, 1.0] and get nudged by simulation evaluations.
+    """
+    boundary_setting: float = 0.5
+    info_sharing_safety: float = 0.5
+    emotional_clarity: float = 0.5
+    peer_pressure_resistance: float = 0.5
+    curiosity: float = 0.5
+
+
 # ---------- Profile / Post / DM models ----------
 
 @dataclass
@@ -139,6 +152,7 @@ class ChildState:
     posts: List[Post] = field(default_factory=list)
     dm_messages: List[DMMessage] = field(default_factory=list)
     simulation_events: List[SimulationEvent] = field(default_factory=list)
+    skill_profile: ChildSkillProfile = field(default_factory=ChildSkillProfile)
 
     # Convenience methods (kept minimal; garden knows about profiles)
     def summary(self) -> Dict:

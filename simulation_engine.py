@@ -39,6 +39,39 @@ def _build_chat_history_for_conv(
         lines.append(f"{sender_label}: {m.text}")
     return "\n".join(lines)
 
+def update_child_skills_from_evaluation(child: ChildState, evaluation: str) -> None:
+    """
+    Heuristically update the child's skill profile using the evaluation text
+    returned by the LLM.
+
+    This is intentionally simple and rule-based. You can refine the rules later.
+    """
+    text = (evaluation or "").lower()
+    sp = child.skill_profile
+
+    # Negative signals
+    if "overshared" in text or "shared too much" in text or "gave personal details" in text:
+        sp.info_sharing_safety -= 0.1
+
+    if "could not say no" in text or "hesitated to say no" in text or "went along" in text:
+        sp.boundary_setting -= 0.1
+        sp.peer_pressure_resistance -= 0.05
+
+    # Positive signals
+    if "handled pressure well" in text or "resisted pressure" in text or "stood up for themselves" in text:
+        sp.peer_pressure_resistance += 0.1
+        sp.boundary_setting += 0.05
+
+    if "asked good questions" in text or "curious" in text or "wanted to know more" in text:
+        sp.curiosity += 0.1
+
+    if "explained their feelings" in text or "expressed how they felt" in text:
+        sp.emotional_clarity += 0.1
+
+    # Clamp to [0.0, 1.0]
+    for field_name in sp.__dataclass_fields__.keys():
+        val = getattr(sp, field_name)
+        setattr(sp, field_name, max(0.0, min(1.0, val)))
 
 def start_simulation_session(
     garden: GardenState,
@@ -295,4 +328,5 @@ Summary: <your explanation for the parent>
                 summary = summary.split(":", 1)[1].strip()
             break
 
+    update_child_skills_from_evaluation(child, summary)
     return label, summary or resp.strip()

@@ -321,6 +321,69 @@ If `image_ratio` is met:
 ### **Avatar Tinting**
 Using HSV rotation and circular cropping, to generate diverse-looking friend profiles.
 
+
+## Adaptive Feed & Child Skill Profile
+
+Panopticon’s feed is not just topic-based — it is **adaptive**.  
+Each child has a lightweight **skill profile** that evolves over time based on their behavior in simulations, and this profile influences how future posts are generated.
+
+### ChildSkillProfile
+
+For every child, the system tracks a small set of skills on a 0.0–1.0 scale:
+
+- `boundary_setting` – how well the child maintains healthy boundaries.
+- `info_sharing_safety` – how cautious they are with personal information.
+- `emotional_clarity` – how clearly they express their feelings.
+- `peer_pressure_resistance` – how well they handle social pressure.
+- `curiosity` – how eager they are to learn and ask questions.
+
+This is stored as a `ChildSkillProfile` attached to each `ChildState`.
+
+### How skills are updated
+
+When a simulation ends, the evaluator LLM produces a textual summary of the child’s behavior.  
+A small rule-based layer parses that summary for signals like:
+
+- “overshared”, “shared too much”, “gave personal details” → lowers `info_sharing_safety`.
+- “could not say no”, “hesitated to say no”, “went along” → lowers `boundary_setting` and `peer_pressure_resistance`.
+- “handled pressure well”, “resisted pressure”, “stood up for themselves” → raises `peer_pressure_resistance` and `boundary_setting`.
+- “asked good questions”, “curious”, “wanted to know more” → raises `curiosity`.
+- “explained their feelings”, “expressed how they felt” → raises `emotional_clarity`.
+
+After each evaluation, scores are clamped back into the range `[0.0, 1.0]`.
+
+This is intentionally simple and transparent: it can be refined or replaced by a more sophisticated model later, but is already enough to demonstrate adaptive behavior in the prototype.
+
+### Adaptive context in feed prompts
+
+When generating posts for a child, Panopticon builds an **adaptive context** string that describes the current skill profile, for example:
+
+> Boundary-setting: 0.30  
+> Information safety: 0.40  
+> Peer pressure resistance: 0.25  
+> Emotional clarity: 0.60  
+> Curiosity: 0.80  
+
+This context is injected into the LLM prompt for each post as `{adaptive_context}`.
+
+The prompt instructs the model to:
+
+- **Model stronger behavior** in skills where the child is weak (e.g., show characters setting boundaries, avoiding oversharing).
+- **Reinforce good patterns** where the child is already doing well.
+- Stay age-appropriate, non-judgmental, and emotionally supportive.
+
+The child never sees these scores or instructions directly — they only experience a feed that gradually shifts toward content that **teaches and models** the patterns they most need to practice.
+
+### Topic and flavor adaptation
+
+The adaptive profile also influences **what** kinds of posts are generated:
+
+- Lower `boundary_setting` or `peer_pressure_resistance` → the system leans more toward friendship / social posts that quietly demonstrate saying “no”, setting limits, and handling pressure.
+- Lower `info_sharing_safety` → more posts model safe sharing and privacy-aware behavior.
+- Higher `curiosity` → a larger fraction of posts are “kid-friendly news”, highlighting positive real-world developments and inviting questions.
+
+This turns the child’s feed into a **personalized teaching engine**: every simulation not only gets evaluated, but also nudges how the future feed looks and behaves for that specific child.
+
 ---
 
 # **Direct Messages (DMs)**
@@ -465,7 +528,7 @@ This will allow:
 ## **Setup**
 
 ```bash
-git clone https://github.com/yourrepo/panopticon
+git clone https://github.com/ludensg/panopticon
 cd panopticon
 
 python3 -m venv venv
