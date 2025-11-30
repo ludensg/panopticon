@@ -1,7 +1,9 @@
 # app.py
 
 import streamlit as st
-from typing import Dict
+from typing import Dict, List, Tuple
+import requests
+import os
 import random
 
 from models import (
@@ -30,6 +32,139 @@ from username_utils import generate_username
 from llm_client import call_llm  # for simulation LLM injection
 
 
+# ---------- Available LLM detection ----------
+
+def get_available_ollama_models() -> List[str]:
+    """
+    Query the Ollama HTTP API for available models.
+
+    Expects OLLAMA_HOST to be something like:
+      - http://localhost:11434
+      - http://host.docker.internal:11434
+
+    Returns a list of model names, e.g. ["llama3", "tinyllama"].
+
+    If anything fails, returns an empty list (and the UI will fall back).
+    """
+    host = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+    url = f"{host}/api/tags"
+
+    try:
+        resp = requests.get(url, timeout=2)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception:
+        return []
+
+    # Per Ollama docs, this is typically: {"models": [{"name": "llama3", ...}, ...]}
+    models = data.get("models") or []
+    names = []
+    for m in models:
+        name = m.get("name")
+        if name:
+            # Some tags include ":latest" or variants; strip them for UI friendliness
+            names.append(name.split(":")[0])
+    # Deduplicate while preserving order
+    seen = set()
+    result = []
+    for n in names:
+        if n not in seen:
+            seen.add(n)
+            result.append(n)
+    return result
+
+
+def openai_available() -> bool:
+    """
+    True if OPENAI_API_KEY is present and non-empty.
+    """
+    return bool(os.environ.get("OPENAI_API_KEY"))
+
+
+def build_llm_backend_options() -> List[str]:
+    """
+    Decide which backends to show in the dropdown, based on environment.
+    """
+    options: List[str] = []
+    if openai_available():
+        options.append("openai")
+    if get_available_ollama_models():
+        options.append("ollama")
+    return options
+
+def llm_selection_ui(
+    label_prefix: str,
+    backend_state_key: str,
+    model_state_key: str,
+) -> Tuple[str, str]:
+    """
+    Render a pair of dropdowns in the sidebar:
+
+    - Backend (openai / ollama), based on what's actually available.
+    - Model (choices appropriate for the selected backend).
+
+    Stores selections in st.session_state[backend_state_key/model_state_key]
+    and returns (backend, model).
+    """
+    backend_options = build_llm_backend_options()
+
+    if not backend_options:
+        st.sidebar.error(
+            "No LLM backend detected. "
+            "Set OPENAI_API_KEY for OpenAI or configure OLLAMA_HOST and ensure Ollama is running."
+        )
+        # Safe fallbacks so the rest of the app doesn't explode
+        return ("openai", "gpt-4.1-mini")
+
+    has_openai = openai_available()
+    ollama_models = get_available_ollama_models()
+    has_ollama = bool(ollama_models)
+
+    # ----- Decide default backend -----
+    if backend_state_key not in st.session_state:
+        if has_openai:
+            default_backend = "openai"
+        elif has_ollama:
+            default_backend = "ollama"
+        else:
+            default_backend = backend_options[0]
+        st.session_state[backend_state_key] = default_backend
+
+    # Clamp to currently available backends
+    if st.session_state[backend_state_key] not in backend_options:
+        st.session_state[backend_state_key] = backend_options[0]
+
+    backend = st.sidebar.selectbox(
+        f"{label_prefix} backend",
+        options=backend_options,
+        index=backend_options.index(st.session_state[backend_state_key]),
+        key=backend_state_key,
+    )
+
+    # ----- Model options per backend -----
+    if backend == "openai":
+        # You can extend this list if you want more OpenAI models
+        model_options = ["gpt-4.1-mini", "gpt-4o-mini"]
+    else:
+        # Ollama: use detected models; fall back to a simple list if none detected
+        model_options = ollama_models or ["llama3", "tinyllama"]
+
+    if (
+        model_state_key not in st.session_state
+        or st.session_state[model_state_key] not in model_options
+    ):
+        st.session_state[model_state_key] = model_options[0]
+
+    model = st.sidebar.selectbox(
+        f"{label_prefix} model",
+        options=model_options,
+        index=model_options.index(st.session_state[model_state_key]),
+        key=model_state_key,
+    )
+
+    return backend, model
+
+
 
 # ---------- Session state setup ----------
 
@@ -47,15 +182,16 @@ def create_default_garden(name: str = "Default Garden") -> GardenState:
     garden.add_child(default_config)
     return garden
 
-def get_feed_llm_config():
+def get_feed_llm_config() -> Tuple[str, str]:
     """
-    Returns (backend, model_name) for the feed generator.
+    Returns (backend, model_name) for the feed generator,
+    based on the sidebar dropdowns.
     """
-    backend = st.session_state.get("llm_backend", "openai")
+    backend = st.session_state.get("feed_backend", "openai")
     if backend == "openai":
-        model_name = st.session_state.get("openai_model", "gpt-4.1-mini")
+        model_name = st.session_state.get("feed_model", "gpt-4.1-mini")
     else:
-        model_name = st.session_state.get("ollama_model", "llama3")
+        model_name = st.session_state.get("feed_model", "llama3")
     return backend, model_name
 
 
@@ -308,69 +444,29 @@ def sidebar_garden_and_child_management():
             st.rerun()  # update labels, header, and any dependent views
 
         if st.sidebar.button("Generate feed for this child"):
-            # Decide which model string to pass based on backend
-            backend = st.session_state.get("llm_backend", "openai")
-            if backend == "openai":
-                model_name = st.session_state.get("openai_model", "gpt-4.1-mini")
-            else:
-                model_name = st.session_state.get("ollama_model", "llama3")
-
+            backend, model_name = get_feed_llm_config()
             generate_feed_for_child(garden, active_child, backend=backend, model_name=model_name)
             st.sidebar.success(f"Feed generated using {backend} ({model_name}).")
             st.rerun()
 
 
-    # ---- AI backend selection ----
-    st.sidebar.subheader("AI Backend")
+    # ---- LLM backend selection ----
+    st.sidebar.subheader("LLM backends")
 
-    backend = st.sidebar.radio(
-        "Backend",
-        options=["openai", "ollama"],
-        index=0,
-        key="llm_backend",
-        help="Choose whether to use OpenAI's API or a local Ollama model.",
+    st.sidebar.markdown("**Feed generation**")
+    feed_backend, feed_model = llm_selection_ui(
+        label_prefix="Feed",
+        backend_state_key="feed_backend",
+        model_state_key="feed_model",
     )
 
-    openai_model = st.sidebar.text_input(
-        "OpenAI model",
-        value=st.session_state.get("openai_model", "gpt-4.1-mini"),
-        key="openai_model",
+    st.sidebar.markdown("**Simulations**")
+    sim_backend, sim_model = llm_selection_ui(
+        label_prefix="Simulation",
+        backend_state_key="sim_backend",
+        model_state_key="sim_model",
     )
 
-    ollama_model = st.sidebar.text_input(
-        "Ollama model",
-        value=st.session_state.get("ollama_model", "llama3"),
-        key="ollama_model",
-        help="Make sure you've pulled this model with `ollama pull <model>`.",
-    )
-
-    # ---- Simulation backend selection ----
-    st.sidebar.subheader("Simulation Backend")
-
-    sim_mode = st.sidebar.radio(
-        "Simulation backend",
-        options=["same_as_feed", "openai", "ollama"],
-        index=0,
-        format_func=lambda x: {
-            "same_as_feed": "Same as feed settings",
-            "openai": "OpenAI (override)",
-            "ollama": "Ollama (override)",
-        }[x],
-        key="sim_llm_mode",
-        help="Choose whether simulations use the same backend as the feed or a separate one.",
-    )
-
-    st.sidebar.text_input(
-        "Simulation OpenAI model",
-        value=st.session_state.get("sim_openai_model", "gpt-4.1-mini"),
-        key="sim_openai_model",
-    )
-
-    st.sidebar.text_input(
-        "Simulation Ollama model",
-        value=st.session_state.get("sim_ollama_model", "llama3"),
-        key="sim_ollama_model",
-    )
 
 
 
