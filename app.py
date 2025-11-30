@@ -24,6 +24,8 @@ from simulation_engine import (
     evaluate_simulation_session,
 )
 
+from username_utils import generate_username
+
 
 from llm_client import call_llm  # for simulation LLM injection
 
@@ -89,9 +91,20 @@ def create_simulation_profile_for_child(garden: GardenState, child: ChildState, 
     """
     scen = get_scenario_by_id(scenario_id)
 
-    # Simple name pool; you can tune this later
-    base_names = ["SkyBuddy", "NewFriend", "GamePal", "StarChatter", "PixelMate", "ChatVoyager"]
-    display_name = random.choice(base_names) + str(random.randint(10, 999))
+    # Derive rough topic(s) from the scenario, if available
+    scenario_topics = []
+    if scen is not None:
+        # You can extend this mapping per scenario fields if you have them
+        scenario_topics.append(scen.risk_type)
+
+    # Collect existing names to avoid duplicate display names in this garden
+    existing_names = [p.display_name for p in garden.profiles]
+
+    display_name = generate_username(
+        mode=child.config.mode,
+        topics=scenario_topics,
+        existing_names=existing_names,
+    )
 
     personality_pool = [
         "curious",
@@ -103,11 +116,7 @@ def create_simulation_profile_for_child(garden: GardenState, child: ChildState, 
     ]
     personality_tags = random.sample(personality_pool, k=2)
 
-    # Topic tag; use scenario risk_type if available
-    if scen is not None:
-        topics = [scen.risk_type, "chat"]
-    else:
-        topics = ["chat"]
+    topics = scenario_topics or ["chat"]
 
     avatar_style = "cartoony" if child.config.mode == "gamified" else "realistic"
     hue_shift = random.random()

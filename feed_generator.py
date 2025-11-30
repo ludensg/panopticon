@@ -10,6 +10,8 @@ from urllib.parse import quote_plus
 
 from image_search import search_image_for_topic
 from news_fetcher import get_child_news_for_topic, NewsItem
+from username_utils import generate_username
+
 
 from models import (
     ChildState,
@@ -19,6 +21,8 @@ from models import (
 )
 from prompts import REALISTIC_PROMPT, GAMIFIED_PROMPT
 from llm_client import call_llm
+
+import re
 
 
 def choose_sub_flavor(post_flavor: str) -> str:
@@ -105,44 +109,33 @@ def get_image_url_for_topic(topic: str) -> str:
 
 
 
-def _find_or_create_profile_for_topic(
-    garden: GardenState,
-    topic: str,
-    mode: str,
-) -> "Profile":
-    from models import Profile  # local import to avoid circular issues
-
+def _find_or_create_profile_for_topic(garden: GardenState, topic: str, mode: str) -> Profile:
+    # Try to reuse an existing synthetic profile that already lists this topic
     for p in garden.profiles:
         if p.role == "synthetic" and topic in p.topics:
             return p
 
-    display_name = random.choice(
-        ["SkyKid", "StarGazer", "PixelPal", "DinoBuddy", "ArtHero", "CloudRider"]
-    ) + str(random.randint(1, 999))
+    # Else create a new one
+    from models import Profile, make_id
 
-    personality_pool = [
-        "curious",
-        "shy",
-        "outgoing",
-        "creative",
-        "thoughtful",
-        "funny",
-        "adventurous",
-    ]
-    personality_tags = random.sample(personality_pool, k=2)
+    # Collect existing display names to avoid duplicates
+    existing_names = [p.display_name for p in garden.profiles]
 
-    hue_shift = random.random()
-    avatar_style = "cartoony" if mode == "gamified" else "realistic"
+    display_name = generate_username(
+        mode=mode,
+        topics=[topic],
+        existing_names=existing_names,
+    )
 
     profile = Profile(
         id=make_id("profile"),
         role="synthetic",
         display_name=display_name,
-        avatar_style=avatar_style,
-        personality_tags=personality_tags,
+        avatar_style="cartoony" if mode == "gamified" else "realistic",
+        personality_tags=["curious", "friendly"],
         topics=[topic],
         is_parent_controlled=False,
-        avatar_hue_shift=hue_shift,
+        avatar_hue_shift=random.random(),
     )
     garden.profiles.append(profile)
     return profile
