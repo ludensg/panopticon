@@ -36,17 +36,19 @@ from llm_client import call_llm  # for simulation LLM injection
 
 def get_available_ollama_models() -> List[str]:
     """
-    Query the Ollama HTTP API for available models.
+    Try to list models from the Ollama HTTP API.
 
-    Expects OLLAMA_HOST to be something like:
-      - http://localhost:11434
-      - http://host.docker.internal:11434
-
-    Returns a list of model names, e.g. ["llama3", "tinyllama"].
-
-    If anything fails, returns an empty list (and the UI will fall back).
+    This is *best-effort* only; if it fails, we just return [] and the app
+    will fall back to a static model list.
     """
-    host = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+    host = os.environ.get("OLLAMA_HOST", "http://localhost:11434").strip()
+
+    # If user passed "localhost:11434" or "host.docker.internal:11434",
+    # add http:// automatically.
+    if not host.startswith("http://") and not host.startswith("https://"):
+        host = "http://" + host
+
+    host = host.rstrip("/")
     url = f"{host}/api/tags"
 
     try:
@@ -56,22 +58,23 @@ def get_available_ollama_models() -> List[str]:
     except Exception:
         return []
 
-    # Per Ollama docs, this is typically: {"models": [{"name": "llama3", ...}, ...]}
     models = data.get("models") or []
-    names = []
+    names: List[str] = []
     for m in models:
         name = m.get("name")
         if name:
-            # Some tags include ":latest" or variants; strip them for UI friendliness
             names.append(name.split(":")[0])
+
     # Deduplicate while preserving order
     seen = set()
-    result = []
+    result: List[str] = []
     for n in names:
         if n not in seen:
             seen.add(n)
             result.append(n)
     return result
+
+
 
 
 def openai_available() -> bool:
@@ -84,13 +87,24 @@ def openai_available() -> bool:
 def build_llm_backend_options() -> List[str]:
     """
     Decide which backends to show in the dropdown, based on environment.
+
+    - Always show OpenAI if OPENAI_API_KEY is set.
+    - Always show Ollama as an option, because in this project we assume
+      it's available (or at least *intended* to be). If Ollama is misconfigured,
+      you'll see errors only when you actually try to generate, not here.
     """
     options: List[str] = []
+
     if openai_available():
         options.append("openai")
-    if get_available_ollama_models():
-        options.append("ollama")
-    return options
+
+    # Do NOT hide Ollama just because /api/tags fails.
+    # We still want the user to be able to select it and type/choose a model.
+    options.append("ollama")
+
+    # Remove duplicates just in case
+    return list(dict.fromkeys(options))
+
 
 def llm_selection_ui(
     label_prefix: str,
@@ -448,6 +462,33 @@ def sidebar_garden_and_child_management():
             generate_feed_for_child(garden, active_child, backend=backend, model_name=model_name)
             st.sidebar.success(f"Feed generated using {backend} ({model_name}).")
             st.rerun()
+
+
+    # ---- Ollama setup warning / guidance ----
+    ollama_host_env = os.environ.get("OLLAMA_HOST")
+
+    if not ollama_host_env:
+        st.sidebar.warning(
+            "⚠ **Ollama setup**\n\n"
+            "- To use the **Ollama** backend, you must:\n"
+            "  1. Have the Ollama server running (e.g. `ollama serve`).\n"
+            "  2. Start Panopticon with the `OLLAMA_HOST` environment variable set,\n"
+            "     for example:\n"
+            "     - `http://localhost:11434` (running directly on your machine), or\n"
+            "     - `http://host.docker.internal:11434` (if this app is in Docker).\n\n"
+            "- If you select **Ollama** in the menus *without* a working setup,\n"
+            "  feed generation and simulations will fail when generating content,\n"
+            "  but the rest of the app will still work."
+        )
+    else:
+        st.sidebar.info(
+            f"ℹ **Ollama setup**\n\n"
+            f"- `OLLAMA_HOST` is currently set to: `{ollama_host_env}`.\n"
+            "- Make sure this URL points to a running Ollama server.\n"
+            "- If it does **not** respond correctly, choosing **Ollama** as a backend\n"
+            "  will cause errors *only* when generating feeds or simulations; the UI\n"
+            "  itself will continue to function."
+        )
 
 
     # ---- LLM backend selection ----
