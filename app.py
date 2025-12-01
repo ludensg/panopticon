@@ -230,11 +230,26 @@ def create_demo_garden_with_sample_content(name: str = "Demo Garden") -> GardenS
     # ---------- 1) Feed: best-effort generation ----------
     try:
         if "feed_backend" in st.session_state:
+            # If the user has already chosen something in the sidebar, respect that.
             backend, model_name = get_feed_llm_config()
         else:
-            backend, model_name = ("openai", "gpt-4.1-mini")
+            # No prior choice: pick a sensible default based on what's actually available.
+            has_openai = openai_available()
+            ollama_models = get_available_ollama_models()
+            has_ollama = bool(ollama_models)
+
+            if has_openai:
+                # Prefer OpenAI if the key is present
+                backend, model_name = ("openai", "gpt-4.1-mini")
+            elif has_ollama:
+                # If Ollama is up and listing models, use the first one
+                backend, model_name = ("ollama", ollama_models[0])
+            else:
+                # Last-resort fallback: assume a local tinyllama model
+                backend, model_name = ("ollama", "tinyllama")
 
         generate_feed_for_child(garden, child, backend=backend, model_name=model_name)
+
     except Exception:
         # Fallback: simple static post so the feed isn't empty
         demo_post = Post(
