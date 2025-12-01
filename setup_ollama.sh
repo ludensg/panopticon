@@ -129,8 +129,8 @@ fi
 echo
 
 echo "Step 3: Choose and ensure a model is available"
-read -r -p "Enter the Ollama model name you want to use [default: llama3]: " OLLAMA_MODEL
-OLLAMA_MODEL="${OLLAMA_MODEL:-llama3}"
+read -r -p "Enter the Ollama model name you want to use [default & recommended: tinyllama]: " OLLAMA_MODEL
+OLLAMA_MODEL="${OLLAMA_MODEL:-tinyllama}"
 echo "Selected model: ${OLLAMA_MODEL}"
 
 if model_exists "$OLLAMA_MODEL"; then

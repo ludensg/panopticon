@@ -67,7 +67,6 @@ fi
 if [[ -z "${OPENAI_API_KEY:-}" ]]; then
   echo -e "${YELLOW}⚠ OPENAI_API_KEY is not set.${RESET}"
   echo "You can still run the app without OpenAI (e.g., Ollama-only),"
-  echo "but features that need OpenAI will not work."
   read -r -p "Set OPENAI_API_KEY for this run? [y/N]: " SET_OAI
   SET_OAI="${SET_OAI:-n}"
   if [[ "$SET_OAI" =~ ^[Yy]$ ]]; then
@@ -114,6 +113,65 @@ if [[ -z "${OLLAMA_HOST:-}" ]]; then
   fi
 fi
 
+# 6B) Optional: manage Ollama server (restart/start)
+if [[ -n "${OLLAMA_HOST:-}" ]]; then
+  echo
+  echo -e "${GREEN}Checking Ollama server at ${OLLAMA_HOST}...${RESET}"
+
+  # Normalize missing scheme (user might have entered host.docker.internal:11434)
+  _OLLAMA_HOST="${OLLAMA_HOST}"
+  if [[ ! "$_OLLAMA_HOST" =~ ^https?:// ]]; then
+    _OLLAMA_HOST="http://${_OLLAMA_HOST}"
+  fi
+
+  if curl -fsS "${_OLLAMA_HOST}/api/tags" >/dev/null 2>&1; then
+    echo -e "${GREEN}✔ Ollama server appears to be running at ${_OLLAMA_HOST}.${RESET}"
+    read -r -p "Restart Ollama server for a clean session? [y/N]: " RESTART_OLLAMA
+    RESTART_OLLAMA="${RESTART_OLLAMA:-n}"
+    if [[ "$RESTART_OLLAMA" =~ ^[Yy]$ ]]; then
+      echo -e "${YELLOW}Attempting to stop existing Ollama 'serve' processes...${RESET}"
+      # Best-effort kill of any 'ollama serve' procs; ignore errors
+      pkill -f "ollama serve" >/dev/null 2>&1 || true
+      sleep 1
+
+      echo -e "${GREEN}Starting new Ollama server in background...${RESET}"
+      # Run in background; log to /tmp so it doesn't spam the terminal
+      (ollama serve > /tmp/ollama_server.log 2>&1 &) || {
+        echo -e "${RED}✖ Failed to start Ollama server automatically.${RESET}"
+        echo "You may need to start it manually (e.g., 'ollama serve')."
+      }
+
+      # Give it a moment to boot, then re-check
+      sleep 2
+      if curl -fsS "${_OLLAMA_HOST}/api/tags" >/dev/null 2>&1; then
+        echo -e "${GREEN}✔ Ollama server is now responding at ${_OLLAMA_HOST}.${RESET}"
+      else
+        echo -e "${YELLOW}⚠ Could not confirm Ollama at ${_OLLAMA_HOST}.${RESET}"
+        echo "You can still try using the Ollama backend, but generation may fail."
+      fi
+    fi
+  else
+    echo -e "${YELLOW}⚠ No Ollama server detected at ${_OLLAMA_HOST}.${RESET}"
+    read -r -p "Start a new Ollama server in the background now? [y/N]: " START_OLLAMA
+    START_OLLAMA="${START_OLLAMA:-n}"
+    if [[ "$START_OLLAMA" =~ ^[Yy]$ ]]; then
+      echo -e "${GREEN}Starting Ollama server in background...${RESET}"
+      (ollama serve > /tmp/ollama_server.log 2>&1 &) || {
+        echo -e "${RED}✖ Failed to start Ollama server automatically.${RESET}"
+        echo "You may need to start it manually (e.g., 'ollama serve')."
+      }
+      sleep 2
+      if curl -fsS "${_OLLAMA_HOST}/api/tags" >/dev/null 2>&1; then
+        echo -e "${GREEN}✔ Ollama server is now responding at ${_OLLAMA_HOST}.${RESET}"
+      else
+        echo -e "${YELLOW}⚠ Still cannot confirm Ollama at ${_OLLAMA_HOST}.${RESET}"
+        echo "Check your Ollama install or host/port, and restart this script if needed."
+      fi
+    fi
+  fi
+fi
+
+
 # 7) Ask which port to run on
 read -r -p "Streamlit port on HOST [default 8501]: " PORT
 PORT="${PORT:-8501}"
@@ -144,7 +202,7 @@ if [[ -n "${OLLAMA_HOST:-}" ]]; then
 fi
 
 # If you want to support host-network Ollama on Linux, you could uncomment:
-# DOCKER_RUN_CMD+=(--network=host)
+DOCKER_RUN_CMD+=(--network=host)
 
 DOCKER_RUN_CMD+=("${IMAGE_NAME}")
 

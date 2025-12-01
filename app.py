@@ -161,7 +161,7 @@ def llm_selection_ui(
         model_options = ["gpt-4.1-mini", "gpt-4o-mini"]
     else:
         # Ollama: use detected models; fall back to a simple list if none detected
-        model_options = ollama_models or ["llama3", "tinyllama"]
+        model_options = ollama_models or ["tinyllama"]
 
     if (
         model_state_key not in st.session_state
@@ -205,7 +205,7 @@ def get_feed_llm_config() -> Tuple[str, str]:
     if backend == "openai":
         model_name = st.session_state.get("feed_model", "gpt-4.1-mini")
     else:
-        model_name = st.session_state.get("feed_model", "llama3")
+        model_name = st.session_state.get("feed_model", "tinyllama")
     return backend, model_name
 
 
@@ -227,7 +227,7 @@ def get_sim_llm_config():
 
     if mode == "ollama":
         backend = "ollama"
-        model_name = st.session_state.get("sim_ollama_model", "llama3")
+        model_name = st.session_state.get("sim_ollama_model", "tinyllama")
         return backend, model_name
 
     # Fallback
@@ -464,7 +464,24 @@ def sidebar_garden_and_child_management():
             st.rerun()
 
 
-    # ---- Ollama setup warning / guidance ----
+    # ---- LLM backend selection ----
+    st.sidebar.subheader("LLM backends")
+
+    st.sidebar.markdown("**Feed generation**")
+    feed_backend, feed_model = llm_selection_ui(
+        label_prefix="Feed",
+        backend_state_key="feed_backend",
+        model_state_key="feed_model",
+    )
+
+    st.sidebar.markdown("**Simulations**")
+    sim_backend, sim_model = llm_selection_ui(
+        label_prefix="Simulation",
+        backend_state_key="sim_backend",
+        model_state_key="sim_model",
+    )
+
+        # ---- Ollama setup warning / guidance ----
     ollama_host_env = os.environ.get("OLLAMA_HOST")
 
     if not ollama_host_env:
@@ -490,23 +507,6 @@ def sidebar_garden_and_child_management():
             "  itself will continue to function."
         )
 
-
-    # ---- LLM backend selection ----
-    st.sidebar.subheader("LLM backends")
-
-    st.sidebar.markdown("**Feed generation**")
-    feed_backend, feed_model = llm_selection_ui(
-        label_prefix="Feed",
-        backend_state_key="feed_backend",
-        model_state_key="feed_model",
-    )
-
-    st.sidebar.markdown("**Simulations**")
-    sim_backend, sim_model = llm_selection_ui(
-        label_prefix="Simulation",
-        backend_state_key="sim_backend",
-        model_state_key="sim_model",
-    )
 
 
 
