@@ -69,6 +69,14 @@ class Profile:
     is_parent_controlled: bool = False
     avatar_hue_shift: float = 0.0  # 0.0–1.0
 
+@dataclass
+class Comment:
+    id: str
+    child_id: str            # which child wrote this comment
+    post_id: str             # the post this comment belongs to
+    author_profile_id: str   # profile of the author (child’s profile id)
+    text: str
+    created_at: datetime
 
 @dataclass
 class Post:
@@ -81,6 +89,10 @@ class Post:
     mode: Literal["realistic", "gamified"]
     image_url: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.utcnow)
+
+    # NEW: interaction from the child(ren)
+    likes: List[str] = field(default_factory=list)        # list of child_ids who liked this
+    comments: List[Comment] = field(default_factory=list) # comments on this post
 
 
 @dataclass

@@ -110,15 +110,22 @@ def get_image_url_for_topic(topic: str) -> str:
 
 
 def _find_or_create_profile_for_topic(garden: GardenState, topic: str, mode: str) -> Profile:
-    # Try to reuse an existing synthetic profile that already lists this topic
-    for p in garden.profiles:
-        if p.role == "synthetic" and topic in p.topics:
-            return p
-
-    # Else create a new one
     from models import Profile, make_id
 
-    # Collect existing display names to avoid duplicates
+    # Collect existing synthetic profiles for this topic
+    candidates = [
+        p for p in garden.profiles
+        if p.role == "synthetic" and topic in (p.topics or [])
+    ]
+
+    # Chance to create a new profile even if some exist
+    create_new_prob = 0.4  # tweak to taste
+
+    if candidates and random.random() > create_new_prob:
+        # Reuse, but pick randomly among matching profiles
+        return random.choice(candidates)
+
+    # Else create a new one
     existing_names = [p.display_name for p in garden.profiles]
 
     display_name = generate_username(
@@ -131,14 +138,15 @@ def _find_or_create_profile_for_topic(garden: GardenState, topic: str, mode: str
         id=make_id("profile"),
         role="synthetic",
         display_name=display_name,
-        avatar_style="cartoony" if mode == "gamified" else "realistic",
-        personality_tags=["curious", "friendly"],
+        avatar_style="realistic" if mode == "realistic" else "cartoony",
+        personality_tags=["friendly", "curious"],
         topics=[topic],
         is_parent_controlled=False,
         avatar_hue_shift=random.random(),
     )
     garden.profiles.append(profile)
     return profile
+
 
 STOPWORDS = {
     "the", "a", "an", "and", "or", "but",

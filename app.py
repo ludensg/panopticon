@@ -10,12 +10,15 @@ from models import (
     GardenState,
     ChildConfig,
     Interest,
-    ChildState,
+    Post,
+    Comment,
+    Profile,
+    DMMessage,
     make_id,
-    Profile
+    ChildState
 )
 from avatar_utils import get_circular_avatar_for_profile
-from feed_generator import generate_feed_for_child  # we'll define this function
+from feed_generator import generate_feed_for_child, build_adaptive_context
 from datetime import datetime
 from scenarios import get_scenarios_for_child_age, get_scenario_by_id
 from models import SimulationEvent
@@ -206,7 +209,6 @@ def create_demo_garden_with_sample_content(name: str = "Demo Garden") -> GardenS
 
     All LLM-dependent steps are best-effort and fall back to static text on errors.
     """
-    # Start from your existing default child setup
     garden = GardenState(id=make_id("garden"), name=name)
 
     default_config = ChildConfig(
@@ -227,7 +229,6 @@ def create_demo_garden_with_sample_content(name: str = "Demo Garden") -> GardenS
 
     # ---------- 1) Feed: best-effort generation ----------
     try:
-        # Use whatever feed backend/model are in session, or fall back
         if "feed_backend" in st.session_state:
             backend, model_name = get_feed_llm_config()
         else:
@@ -235,9 +236,7 @@ def create_demo_garden_with_sample_content(name: str = "Demo Garden") -> GardenS
 
         generate_feed_for_child(garden, child, backend=backend, model_name=model_name)
     except Exception:
-        # Fallback: create a single static post so the feed isn't empty
-        from models import Post  # local import to avoid circulars
-        now = datetime.utcnow()
+        # Fallback: simple static post so the feed isn't empty
         demo_post = Post(
             id=make_id("post"),
             child_id=child.id,
@@ -250,13 +249,41 @@ def create_demo_garden_with_sample_content(name: str = "Demo Garden") -> GardenS
             topic="space",
             mode=child.config.mode,
             image_url=None,
-            created_at=now,
+            created_at=datetime.utcnow(),
         )
         child.posts = [demo_post]
 
-    # ---------- 2) DM: basic friend conversation ----------
-    from models import Profile, DMMessage  # local to avoid circular import issues
+    # Add one explicit child-authored demo post with interactions
+    demo_child_post = Post(
+        id=make_id("post"),
+        child_id=child.id,
+        author_profile_id=child.profile_id,
+        author_name=child.config.name,
+        text="This is Alex’s own demo post, showing what a child-authored post looks like.",
+        topic="space",
+        mode=child.config.mode,
+        image_url=None,
+        created_at=datetime.utcnow(),
+    )
+    demo_child_post.likes.append(child.id)
 
+    demo_comment = Comment(
+        id=make_id("comment"),
+        child_id=child.id,
+        post_id=demo_child_post.id,
+        author_profile_id=child.profile_id,
+        text="I really liked learning about the planets here!",
+        created_at=datetime.utcnow(),
+    )
+    demo_child_post.comments.append(demo_comment)
+
+    # Put the child’s post at the top
+    if child.posts:
+        child.posts.insert(0, demo_child_post)
+    else:
+        child.posts = [demo_child_post]
+
+    # ---------- 2) DM: basic friend conversation ----------
     friend_profile = Profile(
         id=make_id("profile"),
         role="friend",
@@ -295,10 +322,8 @@ def create_demo_garden_with_sample_content(name: str = "Demo Garden") -> GardenS
     # ---------- 3) Simulation: best-effort setup ----------
     scenarios = get_scenarios_for_child_age(child.config.age)
     if scenarios:
-        # Take the first scenario as a demo
         scen = scenarios[0]
         try:
-            # Create a dedicated simulation partner profile
             sim_profile = create_simulation_profile_for_child(
                 garden=garden,
                 child=child,
@@ -306,7 +331,6 @@ def create_demo_garden_with_sample_content(name: str = "Demo Garden") -> GardenS
             )
             conv_id_sim = f"conv_{child.id}_{sim_profile.id}"
 
-            # Start the simulation session (this will inject the first sim message)
             try:
                 backend_sim, model_sim = get_sim_llm_config()
             except Exception:
@@ -326,7 +350,7 @@ def create_demo_garden_with_sample_content(name: str = "Demo Garden") -> GardenS
                 event = None
 
             if event is not None:
-                # Add a sample "good" child reply so the transcript isn't one-sided
+                # Sample "good" child reply
                 reply = DMMessage(
                     id=make_id("dm"),
                     child_id=child.id,
@@ -341,9 +365,8 @@ def create_demo_garden_with_sample_content(name: str = "Demo Garden") -> GardenS
                 )
                 child.dm_messages.append(reply)
 
-                # Attach this reply to the event, if that field exists
                 try:
-                    event.child_reply_message_id = reply.id  # type: ignore[attr-defined]
+                    event.child_reply_message_id = reply.id  # if field exists
                 except Exception:
                     pass
 
@@ -361,7 +384,6 @@ def create_demo_garden_with_sample_content(name: str = "Demo Garden") -> GardenS
                     event.evaluation_summary = summary
                     event.is_active = False
                 except Exception:
-                    # Fallback: static label/summary if evaluation fails
                     if not getattr(event, "outcome_label", None):
                         event.outcome_label = "NEEDS_REVIEW"
                     if not getattr(event, "evaluation_summary", None):
@@ -371,11 +393,11 @@ def create_demo_garden_with_sample_content(name: str = "Demo Garden") -> GardenS
                         )
                     event.is_active = False
         except Exception:
-            # If *anything* goes wrong, we just skip the simulation demo,
-            # so the app still starts cleanly.
+            # If anything goes wrong, just skip the simulation demo
             pass
 
     return garden
+
 
 
 def get_feed_llm_config() -> Tuple[str, str]:
@@ -717,7 +739,7 @@ def overview_tab(garden: GardenState, child: ChildState):
         for post in child.posts[:3]:
             st.markdown(f"- **{post.topic}**: {post.text}")
     else:
-        st.info("No posts yet. Generate a feed from the sidebar.")
+        st.info("No posts yet. Please generate a feed.")
 
     if child.dm_messages:
         st.markdown("### Recent DMs")
@@ -737,11 +759,80 @@ def feed_tab(garden: GardenState, child: ChildState) -> None:
     feed_view, settings_view = st.tabs(["Feed", "Feed settings"])
 
     with feed_view:
-        if st.button("Generate feed for this child"):
+
+        if st.button("Generate a feed for this child"):
             backend, model_name = get_feed_llm_config()
             generate_feed_for_child(garden, child, backend=backend, model_name=model_name)
             st.success("Feed generated.")
             st.rerun()
+
+
+        with st.expander("Post Something!", expanded=False):
+            st.subheader("Post Something!")
+            # Topic selection for the child’s own post
+            interests = child.config.interests or []
+            topic_options = [i.topic for i in interests] or ["general"]
+            default_topic = topic_options[0]
+
+            new_post_topic = st.selectbox(
+                "Topic",
+                options=topic_options + ["Other…"],
+                index=0,
+                key=f"child_post_topic_{child.id}",
+            )
+
+            other_topic = ""
+            if new_post_topic == "Other…":
+                other_topic = st.text_input(
+                    "Custom topic",
+                    key=f"child_post_topic_other_{child.id}",
+                )
+
+            new_post_text = st.text_area(
+                "Write a post as this child",
+                key=f"child_post_text_{child.id}",
+                placeholder="What do you want to share today?",
+                height=80,
+            )
+
+            col_post_btn, col_post_info = st.columns([1, 3])
+            with col_post_btn:
+                if st.button("Post", key=f"child_post_submit_{child.id}"):
+                    topic = other_topic.strip() if new_post_topic == "Other…" else new_post_topic
+                    topic = topic or "general"
+
+                    if new_post_text.strip():
+                        from models import Post  # local import to avoid cycles
+
+                        now = datetime.utcnow()
+                        child_profile = garden.get_profile_by_id(child.profile_id)
+                        author_name = child_profile.display_name if child_profile else child.config.name
+
+                        post = Post(
+                            id=make_id("post"),
+                            child_id=child.id,
+                            author_profile_id=child.profile_id,
+                            author_name=author_name,
+                            text=new_post_text.strip(),
+                            topic=topic,
+                            mode=child.config.mode,
+                            image_url=None,
+                            created_at=now,
+                        )
+
+                        # Prepend to the child’s feed
+                        if child.posts:
+                            child.posts = [post] + child.posts
+                        else:
+                            child.posts = [post]
+
+                        st.success("Post created.")
+                        st.rerun()
+                    else:
+                        st.warning("Write something before posting.")
+
+            with col_post_info:
+                st.caption("These posts are authored by the child and appear in their feed.")
 
         if not child.posts:
             st.info("No posts yet. Generate a feed to get started.")
@@ -780,6 +871,114 @@ def feed_tab(garden: GardenState, child: ChildState) -> None:
                                 st.image(post.image_url, width=120)
                             except Exception:
                                 st.caption("Image unavailable")
+
+                    # --- Interaction footer: likes + comments + edit/delete (child posts) ---
+                    st.markdown("")  # small spacer
+                    col_like, col_comments = st.columns([1, 5])
+
+                    # --- Likes ---
+                    with col_like:
+                        # Has this child already liked this post?
+                        liked = child.id in (post.likes or [])
+                        like_label = "❤️ Unlike" if liked else "🤍 Like"
+
+                        if st.button(
+                            like_label,
+                            key=f"like_btn_{child.id}_{post.id}",
+                        ):
+                            if liked:
+                                post.likes = [cid for cid in post.likes if cid != child.id]
+                            else:
+                                post.likes.append(child.id)
+                            st.rerun()
+
+                        st.caption(f"{len(post.likes)} like(s)")
+
+                    # --- Comments ---
+                    from models import Comment
+
+                    with col_comments:
+                        # Show existing comments
+                        if post.comments:
+                            for comment in sorted(post.comments, key=lambda c: c.created_at):
+                                author = garden.get_profile_by_id(comment.author_profile_id)
+                                author_name = author.display_name if author else "Unknown"
+                                ts_c = comment.created_at.strftime("%Y-%m-%d %H:%M")
+
+                                is_child_comment = comment.child_id == child.id
+
+                                with st.expander(
+                                    f"💬 {author_name} at {ts_c}",
+                                    expanded=False,
+                                ):
+                                    st.write(comment.text)
+
+                                    # Allow child to edit/delete only their own comments
+                                    if is_child_comment:
+                                        new_text = st.text_area(
+                                            "Edit your comment",
+                                            value=comment.text,
+                                            key=f"edit_comment_{comment.id}",
+                                        )
+                                        c1, c2 = st.columns(2)
+                                        with c1:
+                                            if st.button("Save", key=f"save_comment_{comment.id}"):
+                                                comment.text = new_text.strip()
+                                                st.success("Comment updated.")
+                                                st.rerun()
+                                        with c2:
+                                            if st.button("Delete", key=f"delete_comment_{comment.id}"):
+                                                post.comments = [
+                                                    c for c in post.comments if c.id != comment.id
+                                                ]
+                                                st.success("Comment deleted.")
+                                                st.rerun()
+
+                        # New comment input
+                        new_comment = st.text_input(
+                            "Add a comment",
+                            key=f"new_comment_{child.id}_{post.id}",
+                            placeholder="Write a friendly, safe comment...",
+                        )
+                        if st.button(
+                            "Comment",
+                            key=f"comment_btn_{child.id}_{post.id}",
+                        ):
+                            if new_comment.strip():
+                                comment = Comment(
+                                    id=make_id("comment"),
+                                    child_id=child.id,
+                                    post_id=post.id,
+                                    author_profile_id=child.profile_id,
+                                    text=new_comment.strip(),
+                                    created_at=datetime.utcnow(),
+                                )
+                                post.comments.append(comment)
+                                st.success("Comment added.")
+                                st.rerun()
+                            else:
+                                st.warning("Write something before commenting.")
+
+                    # --- Optional: edit/delete for child-authored posts ---
+                    is_child_post = post.author_profile_id == child.profile_id
+                    if is_child_post:
+                        with st.expander("Edit or delete this post", expanded=False):
+                            edited_text = st.text_area(
+                                "Edit your post",
+                                value=post.text,
+                                key=f"edit_post_text_{post.id}",
+                            )
+                            c1, c2 = st.columns(2)
+                            with c1:
+                                if st.button("Save changes", key=f"save_post_{post.id}"):
+                                    post.text = edited_text.strip()
+                                    st.success("Post updated.")
+                                    st.rerun()
+                            with c2:
+                                if st.button("Delete post", key=f"delete_post_{post.id}"):
+                                    child.posts = [p for p in child.posts if p.id != post.id]
+                                    st.success("Post deleted.")
+                                    st.rerun()
 
                     st.markdown("---")
 
@@ -1118,15 +1317,62 @@ def dm_tab(garden: GardenState, child: ChildState):
 def analytics_tab(garden: GardenState, child: ChildState) -> None:
     st.header(f"Analytics for {child.config.name}")
 
-    # --- Basic stats ---
-    st.subheader("Overview")
+    # --- Child at a glance ---
+    st.subheader("Child at a glance")
+
+    # 1) Adaptive context summary (skill profile)
+    try:
+        adaptive = build_adaptive_context(child)
+        with st.expander("Adaptive context (skill profile)", expanded=False):
+            st.markdown(f"```text\n{adaptive}\n```")
+    except Exception:
+        st.caption("Adaptive context is not available for this child yet.")
+
+    # 2) Behavior snapshot
+    # Posts
+    total_posts = len(child.posts)
+    child_posts = sum(
+        1 for p in child.posts if p.author_profile_id == child.profile_id
+    )
+    likes_given = sum(
+        1 for p in child.posts if getattr(p, "likes", None) and child.id in p.likes
+    )
+    comments_written = 0
+    for p in child.posts:
+        for c in getattr(p, "comments", []):
+            if c.child_id == child.id:
+                comments_written += 1
+
+    # DMs
+    msgs_sent = 0
+    msgs_received = 0
+    for m in child.dm_messages:
+        if m.sender_profile_id == child.profile_id:
+            msgs_sent += 1
+        else:
+            msgs_received += 1
+
+    # Simulations
+    safe_count = 0
+    unsafe_count = 0
+    needs_review_count = 0
+    for e in child.simulation_events:
+        label = (e.outcome_label or "").upper()
+        if label == "SAFE":
+            safe_count += 1
+        elif label == "UNSAFE":
+            unsafe_count += 1
+        else:
+            needs_review_count += 1
 
     st.write(
         f"- Age: **{child.config.age}**  \n"
         f"- Mode: **{child.config.mode}**  \n"
-        f"- Posts generated: **{len(child.posts)}**  \n"
-        f"- DM messages: **{len(child.dm_messages)}**  \n"
-        f"- Simulation sessions: **{len(child.simulation_events)}**"
+        f"- Posts in feed: **{total_posts}** (child-authored: **{child_posts}**)  \n"
+        f"- Likes given: **{likes_given}**  \n"
+        f"- Comments written: **{comments_written}**  \n"
+        f"- DM messages sent: **{msgs_sent}**, received: **{msgs_received}**  \n"
+        f"- Simulation outcomes: 🟢 SAFE **{safe_count}**, 🔴 UNSAFE **{unsafe_count}**, 🟡 needs review **{needs_review_count}**"
     )
 
     st.markdown("---")
@@ -1310,6 +1556,30 @@ def analytics_tab(garden: GardenState, child: ChildState) -> None:
 
 def main():
     st.set_page_config(page_title="Panopticon – Social Media Simulator", layout="wide")
+
+    # First-run loading screen: generate demo garden + feed
+    if "gardens" not in st.session_state:
+        # Nice centered loading message
+        st.markdown(
+            """
+            <div style="text-align: center; margin-top: 15vh;">
+              <h1 style="margin-bottom: 0.5rem;">Panopticon is loading…</h1>
+              <p style="font-size: 1.1rem; color: #666;">
+                We’re generating a live demo feed to showcase the main features of the app.<br/>
+                This only happens the first time this session starts.
+              </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Spinner while we initialize the demo garden
+        with st.spinner("Preparing demo environment (demo garden, feed, DMs, and simulation)…"):
+            init_session_state()  # this creates the demo garden + sample content
+
+        # Once initialization is done, rerun so the normal UI shows up
+        st.rerun()
+
     init_session_state()
 
     sidebar_garden_and_child_management()
@@ -1320,7 +1590,7 @@ def main():
     st.caption("Parent-curated, AI-assisted social media simulator for children (prototype).")
     st.markdown(f"**Garden:** {garden.name} · **Child:** {child.config.name} ({child.config.age}, mode: {child.config.mode})")
 
-    tabs = st.tabs(["Overview", "Feed", "DMs", "Analytics"])
+    tabs = st.tabs(["Overview", "Child's Feed", "DMs (Child View)", "Parent Dashboard"])
     with tabs[0]:
         overview_tab(garden, child)
     with tabs[1]:
